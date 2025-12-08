@@ -1,3 +1,5 @@
+//This is a test for fast calculations, did not work, damping and some algorithms were removed.
+
 #include <Wire.h>
 #include <RH_ASK.h>
 #ifdef RH_HAVE_HARDWARE_SPI
