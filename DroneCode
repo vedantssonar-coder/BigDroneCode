@@ -1,0 +1,428 @@
+#include <Wire.h>
+#include <RH_ASK.h>
+#ifdef RH_HAVE_HARDWARE_SPI
+#include <SPI.h>  // Needed to compile RH_ASK
+#endif
+
+#define RAD2DEG (180.0 / 3.14159265)
+#define MPU_ADDR 0x68
+#define MAX_THROTTLE 1950  // Set to 2000 for full range
+#define TEST_MODE false    // Set to false for actual flight
+
+
+const int led = 7;   //+ve
+const int led1 = 8;  //-ve
+bool start = false;
+bool armed = false;
+
+// Timer globals
+unsigned long currentTime = 0, previousTime = 0;
+float elapsedTime = 0;
+
+unsigned long lastSignalTime = 0;
+const unsigned long SIGNAL_TIMEOUT = 1000;  // in milliseconds
+bool failsafeLanding = false;
+bool landingInProgress = false;
+unsigned long landingStartTime = 0;
+unsigned long lastLandingCommandTime = 0;
+const unsigned long LANDING_COMMAND_COOLDOWN = 1000;  // ms
+
+// IMU
+float accRaw[3], accAngle[3], accError[3];
+float gyrRaw[3], gyrAngle[3], gyrError[3];
+float roll = 0, pitch = 0, yaw = 0;
+
+// PID
+float PID_x = 0, PID_y = 0;
+float pid_p_x = 0, pid_i_x = 0, pid_d_x = 0;
+float pid_p_y = 0, pid_i_y = 0, pid_d_y = 0;
+float previous_error_x = 0, previous_error_y = 0;
+const float kp_x = 3.55, ki_x = 0.005, kd_x = 2.05;
+const float kp_y = 3.55, ki_y = 0.005, kd_y = 2.05;
+const float d_angle_x = 0, d_angle_y = 0;
+
+// Remote
+RH_ASK driver;
+int slider = 0, x = 0, y = 0;
+bool button = 1;
+
+// Motor Class
+class Motor {
+public:
+  const int pin;
+  float Power = 1000, Initial = 1000, Final = 1000, Diff = 0;
+  Motor(int p)
+    : pin(p) {
+    pinMode(pin, OUTPUT);
+  }
+  void update() {
+    digitalWrite(pin, HIGH);
+    delayMicroseconds(Power);
+    digitalWrite(pin, LOW);
+    delayMicroseconds(100);
+  }
+};
+
+float throttle = 1000;
+Motor m[] = { Motor(3), Motor(5), Motor(6), Motor(9) };  // +x +y -x -y
+void motorchangetest(bool fast = false);
+
+// ------------------ SETUP ------------------
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+  Serial.println("Started serial monitor output");
+  pinMode(led, OUTPUT);
+  pinMode(led1, OUTPUT);
+  Serial.println("Set LED");
+  // IMU Init
+  Serial.println("Starting IMU...");
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0x00);
+  Wire.endTransmission();
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x1C);
+  Wire.write(0x10);
+  Wire.endTransmission();
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x1B);
+  Wire.write(0x10);
+  Wire.endTransmission();
+  Serial.println("Started IMU  /  Calibrating...");
+  calculate_IMU_error();
+  Serial.println("Finished Calibrating IMU");
+  Serial.println("Starting Motor Calibration...");
+  // Motor warm-up
+  for (int i = 0; i < 1; i++)
+    motorchangetest(true);
+
+  Serial.println("Finished Motor Calibration");
+  driver.init();
+  Serial.println("Remote COntrol driver intialized");
+  delay(20);
+  Serial.println("Testing remote...");
+  for (int i = 0; i < 20; i++) {
+    recv();
+    debug_output();
+  }
+  Serial.println("Finished Testing remote");
+  Serial.println("System ready");
+  delay(1000);
+}
+
+// ------------------ LOOP ------------------
+void loop() {
+  LedBlinker();
+  if (TEST_MODE) {
+    static unsigned long testStart = millis();
+    unsigned long elapsed = millis() - testStart;
+    slider = constrain(map(elapsed, 0, 10000, 0, 250), 0, 250);
+    armed = true;
+    lastSignalTime = millis();
+    button = 1;
+  } else {
+    recv();
+static bool lastButton = 1;
+if (lastButton == 1 && button == 0) {
+  if (!armed) {
+    armed = true;
+    Serial.println("Drone ARMED");
+  } else if (!landingInProgress && millis() - lastLandingCommandTime > LANDING_COMMAND_COOLDOWN) {
+    landingInProgress = true;
+    landingStartTime = millis();
+    lastLandingCommandTime = millis();
+    Serial.println("Landing triggered by user.");
+  }
+}
+lastButton = button;
+  }
+
+  if (armed) {
+    if (!landingInProgress) {
+      throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
+    }
+
+    IMU();
+    if (!start) {
+      roll = pitch = yaw = 0;
+      start = true;
+    }
+
+    if (!TEST_MODE && millis() - lastSignalTime > SIGNAL_TIMEOUT && !failsafeLanding) {
+      Serial.println("Signal lost — initiating emergency landing.");
+      failsafeLanding = true;
+      landingInProgress = true;
+      landingStartTime = millis();
+    }
+
+    if (landingInProgress) {
+      land();
+    } else {
+      PID_X();
+      PID_Y();
+    }
+
+    motorchangetest(false);
+    debug_output();
+  }
+  delayMicroseconds(500);
+}
+
+// ------------------ IMU ------------------
+void IMU() {
+  previousTime = currentTime;
+  currentTime = millis();
+  elapsedTime = (currentTime - previousTime) / 1000.0f;
+
+  // Accel
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDR, 6);
+  accRaw[0] = (Wire.read() << 8 | Wire.read()) / 4096.0;
+  accRaw[1] = (Wire.read() << 8 | Wire.read()) / 4096.0;
+  accRaw[2] = (Wire.read() << 8 | Wire.read()) / 4096.0;
+  accAngle[0] = atan2(accRaw[1], sqrt(accRaw[0] * accRaw[0] + accRaw[2] * accRaw[2])) * RAD2DEG - accError[0];
+  accAngle[1] = atan2(-accRaw[0], sqrt(accRaw[1] * accRaw[1] + accRaw[2] * accRaw[2])) * RAD2DEG - accError[1];
+
+  // Gyro
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x43);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDR, 6);
+  for (int i = 0; i < 3; i++) {
+    int16_t raw = Wire.read() << 8 | Wire.read();
+    gyrRaw[i] = raw / 32.8 - gyrError[i];
+    if (abs(gyrRaw[i]) < 0.3) gyrRaw[i] = 0;
+  }
+
+  // Fusion
+  gyrAngle[0] = gyrRaw[0] * elapsedTime;
+  gyrAngle[1] = gyrRaw[1] * elapsedTime;
+  gyrAngle[2] = gyrRaw[2] * elapsedTime;
+  roll = 0.90 * (roll + gyrAngle[0]) + 0.10 * accAngle[0];
+  pitch = 0.90 * (pitch + gyrAngle[1]) + 0.10 * accAngle[1];
+  yaw = yaw + gyrAngle[2];
+}
+
+// ------------------ CALIBRATION ------------------
+void calculate_IMU_error() {
+  for (int i = 0; i < 2000; i++) {
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x3B);
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_ADDR, 6);
+    accRaw[0] = (Wire.read() << 8 | Wire.read()) / 4096.0;
+    accRaw[1] = (Wire.read() << 8 | Wire.read()) / 4096.0;
+    accRaw[2] = (Wire.read() << 8 | Wire.read()) / 4096.0;
+    accError[0] += atan2(accRaw[1], sqrt(accRaw[0] * accRaw[0] + accRaw[2] * accRaw[2])) * RAD2DEG;
+    accError[1] += atan2(-accRaw[0], sqrt(accRaw[1] * accRaw[1] + accRaw[2] * accRaw[2])) * RAD2DEG;
+  }
+  accError[0] /= 2000.0;
+  accError[1] /= 2000.0;
+
+  for (int i = 0; i < 2000; i++) {
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x43);
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_ADDR, 6);
+    gyrError[0] += (Wire.read() << 8 | Wire.read()) / 32.8;
+    gyrError[1] += (Wire.read() << 8 | Wire.read()) / 32.8;
+    gyrError[2] += (Wire.read() << 8 | Wire.read()) / 32.8;
+  }
+  for (int i = 0; i < 3; i++) gyrError[i] /= 2000.0;
+}
+
+// ------------------ PID ------------------
+void PID_X() {
+  float error = roll - d_angle_x;
+  if (abs(error) < 3) pid_i_x += ki_x * error;
+  pid_d_x = kd_x * (error - previous_error_x) / elapsedTime;
+  PID_x = kp_x * error + pid_i_x + pid_d_x;
+  PID_x = constrain(PID_x, -1000, 1000);
+  m[0].Final = throttle + PID_x;
+  m[2].Final = throttle - PID_x;
+  m[0].Final = constrain(m[0].Final, 1000, 2000);
+  m[2].Final = constrain(m[2].Final, 1000, 2000);
+  previous_error_x = error;
+}
+
+void PID_Y() {
+  float error = pitch - d_angle_y;
+  if (abs(error) < 3) pid_i_y += ki_y * error;
+  pid_d_y = kd_y * (error - previous_error_y) / elapsedTime;
+  PID_y = kp_y * error + pid_i_y + pid_d_y;
+  PID_y = constrain(PID_y, -1000, 1000);
+  m[1].Final = throttle + PID_y;
+  m[3].Final = throttle - PID_y;
+  m[1].Final = constrain(m[1].Final, 1000, 2000);
+  m[3].Final = constrain(m[3].Final, 1000, 2000);
+  previous_error_y = error;
+}
+
+// ------------------ MOTOR UPDATE ------------------
+void motorchangetest(bool fast = false) {
+  if (fast) {
+    for (int i = 0; i < 4; i++) {
+      m[i].Power = constrain(m[i].Final, 1000, 2000);
+      m[i].update();
+      m[i].Initial = m[i].Power;
+    }
+    return;
+  }
+  // Step 1: Calculate smooth step from Initial to Final (80% of diff)
+  for (int i = 0; i < 4; i++) {
+    m[i].Diff = 0.8f * (m[i].Final - m[i].Initial) / 4.0f;
+    m[i].Power = m[i].Initial;
+  }
+
+  // Phase 1: Initial to Final
+  for (int step = 0; step < 4; step++) {
+    for (int i = 0; i < 4; i++) {
+      m[i].Power += m[i].Diff;
+      m[i].Power = constrain(m[i].Power, 1000, 2000);
+      m[i].update();
+    }
+  }
+
+  // Step 2: Final to Throttle (20% of full adjustment)
+  for (int i = 0; i < 4; i++) {
+    m[i].Diff = 0.2f * (m[i].Final - m[i].Power) / 4.0f;
+  }
+
+  // Phase 2: Final to Throttle
+  for (int step = 0; step < 4; step++) {
+    for (int i = 0; i < 4; i++) {
+      m[i].Power += m[i].Diff;
+      m[i].Power = constrain(m[i].Power, 1000, 2000);
+      m[i].update();
+    }
+  }
+
+  // Update Initial for next round
+  for (int i = 0; i < 4; i++) {
+    m[i].Initial = m[i].Power;
+  }
+}
+
+// ------------------ RECV ------------------
+void recv() {
+  uint8_t buf[RH_ASK_MAX_MESSAGE_LEN];
+  uint8_t len = sizeof(buf);
+  if (driver.recv(buf, &len)) {
+    slider = buf[0] + buf[1] + buf[2] + buf[3];
+    x = buf[4];
+    y = buf[5];
+    button = buf[6];
+    lastSignalTime = millis();  // Signal received
+  }
+}
+
+// ------------------ LAND ------------------
+void land() {
+  static bool firstRun = true;
+  static unsigned long lastStepTime = 0;
+  static unsigned long lastBlinkTime = 0;
+  const unsigned long stepInterval = 100;  // ms between throttle reduction
+  float descentRate = 2.0;                 // Throttle decrement per step
+  if (firstRun) {
+    Serial.println("Landing started...");
+
+    firstRun = false;
+  }
+  if (!failsafeLanding && millis() - landingStartTime > 2000 && !button) {
+    Serial.println("Landing aborted by user.");
+    landingInProgress = false;
+    firstRun = true;
+    lastLandingCommandTime = millis();  // prevent immediate retrigger
+    return;
+  }
+
+  if (failsafeLanding && millis() - lastSignalTime < SIGNAL_TIMEOUT) {
+    Serial.println("Signal recovered — resuming flight.");
+    failsafeLanding = false;
+    landingInProgress = false;
+    firstRun = true;
+    return;
+  }
+
+  if (throttle < 1050) {
+    descentRate = 2.5;
+  }
+
+  if (millis() - lastStepTime > stepInterval) {
+    lastStepTime = millis();
+    throttle = max(1000, throttle - descentRate);
+  }
+  x = 0;
+  y = 0;
+  IMU();
+  PID_X();
+  PID_Y();
+  motorchangetest(true);
+
+
+  if (m[0].Power <= 1030 && m[1].Power <= 1030 && m[2].Power <= 1030 && m[3].Power <= 1030) {
+    Serial.println("Landing complete. Drone disarmed.");
+    armed = false;
+    failsafeLanding = false;
+    landingInProgress = false;
+    firstRun = true;
+  }
+}
+
+// ------------------ DEBUG ------------------
+void debug_output() {
+  Serial.print(m[0].Power);
+  Serial.print("/");
+  Serial.print(m[1].Power);
+  Serial.print("/");
+  Serial.print(m[2].Power);
+  Serial.print("/");
+  Serial.print(m[3].Power);
+  Serial.print(" | ");
+  Serial.print(roll);
+  Serial.print("/");
+  Serial.print(pitch);
+  Serial.print("/");
+  Serial.print(yaw);
+  Serial.print(" | ");
+  Serial.print(slider);
+  Serial.print("/");
+  Serial.print(x);
+  Serial.print("/");
+  Serial.print(y);
+  Serial.print("/");
+  Serial.println(button);
+}
+
+void LedBlinker() {
+  static unsigned long lastBlinkTime = 0;
+  static int blinkPhase = 0;
+
+  if (failsafeLanding) {
+    unsigned long now = millis();
+    static const int patternCount = 6;
+    const int blinkTimes[patternCount] = { 300, 100, 100, 50, 50, 1000 };
+    const bool states[patternCount] = { HIGH, LOW, HIGH, LOW, HIGH, LOW };
+
+    if (now - lastBlinkTime >= blinkTimes[blinkPhase]) {
+      lastBlinkTime = now;
+      digitalWrite(led, states[blinkPhase]);
+      blinkPhase = (blinkPhase + 1) % patternCount;
+    }
+  } else if (armed) {
+    digitalWrite(led, HIGH);  // Solid on
+  } else {
+    digitalWrite(led, LOW);  // Solid off
+  }
+}
+
+
+/* Led Understanding :-
+        
+        Just ON - Armed
+        Just OFF - Disarmed
+        
+        !  ! !  - Signal lost*/
