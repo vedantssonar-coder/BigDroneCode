@@ -7,7 +7,7 @@
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950  // Set to 2000 for full range
-#define TEST_MODE false    // Set to false for actual flight
+#define TEST_MODE true     // Set to false for actual flight
 
 
 const int led = 7;   //+ve
@@ -72,8 +72,10 @@ public:
     pinMode(pin, OUTPUT);
   }
   void update() {
-    constrain((int)((Power - 1000) / 4), 0, 255);
-    analogWrite(pin, Power);
+    digitalWrite(pin, HIGH);
+    delayMicroseconds(Power);
+    digitalWrite(pin, LOW);
+    //delayMicroseconds(100);
   }
 };
 
@@ -186,13 +188,27 @@ void loop() {
         PID_x = PID_y = PID_z = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
       }
-      motorchangetest(false);
+      motorchangetest(true);
     }
 
-
-    debug_output();
+    printLoopHz();
+    //debug_output();
   }
-  delayMicroseconds(10);
+  //delayMicroseconds(100);
+}
+
+
+void printLoopHz() {
+  static unsigned long lastPrint = 0;
+  static unsigned long count = 0;
+  count++;
+  unsigned long now = millis();
+  if (now - lastPrint >= 1000) {   // every 1 s
+    Serial.print("Loop Hz: ");
+    Serial.println(count);
+    count = 0;
+    lastPrint = now;
+  }
 }
 
 // ------------------ IMU ------------------
@@ -481,7 +497,7 @@ void land() {
   for (int i = 0; i < 4; i++) {
     m[i].Final = throttle;
   }
-  motorchangetest(false);  // apply immediately
+  motorchangetest(true);  // apply immediately
 
   // Disarm once motors are low enough
   if (m[0].Power <= 1030 && m[1].Power <= 1030 && m[2].Power <= 1030 && m[3].Power <= 1030) {
