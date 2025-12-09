@@ -72,10 +72,8 @@ public:
     pinMode(pin, OUTPUT);
   }
   void update() {
-    digitalWrite(pin, HIGH);
-    delayMicroseconds(Power);
-    digitalWrite(pin, LOW);
-    delayMicroseconds(100);
+    constrain((int)((Power - 1000) / 4), 0, 255);
+    analogWrite(pin, Power);
   }
 };
 
@@ -188,13 +186,13 @@ void loop() {
         PID_x = PID_y = PID_z = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
       }
-      motorchangetest();
+      motorchangetest(false);
     }
 
 
     debug_output();
   }
-  delayMicroseconds(500);
+  delayMicroseconds(10);
 }
 
 // ------------------ IMU ------------------
