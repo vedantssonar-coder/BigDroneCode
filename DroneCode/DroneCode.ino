@@ -8,7 +8,7 @@
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950  // Set to 2000 for full range
-#define TEST_MODE true     // Set to false for actual flight
+#define TEST_MODE false     // Set to false for actual flight
 
 
 const int led = 7;   //+ve
