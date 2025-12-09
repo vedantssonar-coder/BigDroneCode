@@ -134,9 +134,9 @@ void IMU() {
 
   if (abs(roll - prev_roll) > 10)
     roll = prev_roll;
-  if (abs(roll - prev_pitch) > 10)
+  if (abs(pitch - prev_pitch) > 10)
     pitch = prev_pitch;
-  if (abs(roll - prev_yaw) > 10)
+  if (abs(yaw - prev_yaw) > 10)
     yaw = prev_yaw;
 }
 
