@@ -236,12 +236,12 @@ void IMU() {
   pitch = kalmanAngleY;
   yaw += gz * elapsedTime;
 
-  /*if (abs(roll - prev_roll) > 10)
+  if (abs(roll - prev_roll) > 10)
     roll = prev_roll;
   if (abs(roll - prev_pitch) > 10)
     pitch = prev_pitch;
   if (abs(roll - prev_yaw) > 10)
-    yaw = prev_yaw;*/
+    yaw = prev_yaw;
 }
 
 
