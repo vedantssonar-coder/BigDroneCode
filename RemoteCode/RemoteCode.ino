@@ -42,7 +42,7 @@ void loop() {
   }
   x = analogRead(A1) / 4;
   y = analogRead(A2) / 4;
-  button = analogRead(A3) / 4;
+  button = analogRead(A3) / 10;
   Serial.print((uint8_t)slider1);
   Serial.print(" / ");
   Serial.print((uint8_t)slider2);
