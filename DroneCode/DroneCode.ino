@@ -90,7 +90,7 @@ void loop() {
 
     debug_output();
   
-  delayMicroseconds(500);
+  delayMicroseconds(1000);
 }
 
 // ------------------ IMU ------------------
@@ -132,12 +132,12 @@ void IMU() {
   pitch = kalmanAngleY;
   yaw += gz * elapsedTime;
 
-  if (abs(roll - prev_roll) > 10)
+  /*if (abs(roll - prev_roll) > 15)
     roll = prev_roll;
-  if (abs(pitch - prev_pitch) > 10)
+  if (abs(pitch - prev_pitch) > 15)
     pitch = prev_pitch;
-  if (abs(yaw - prev_yaw) > 10)
-    yaw = prev_yaw;
+  if (abs(yaw - prev_yaw) > 15)
+    yaw = prev_yaw;*/ //was used to remove noise but ended up causing x axis to stop working
 }
 
 
