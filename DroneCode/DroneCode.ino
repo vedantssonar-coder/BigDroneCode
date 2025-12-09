@@ -1,5 +1,6 @@
 #include <Wire.h>
 #include <RH_ASK.h>
+#include <ServoTimer2.h>
 #ifdef RH_HAVE_HARDWARE_SPI
 #include <SPI.h>  // Needed to compile RH_ASK
 #endif
@@ -62,25 +63,24 @@ RH_ASK driver;
 int slider = 0, x = 0, y = 0;
 bool button = 1;
 
+ServoTimer2 esc[4];
+
 // Motor Class
 class Motor {
 public:
-  const int pin;
+  const int index;
   float Power = 1000, Initial = 1000, Final = 1000, Diff = 0;
-  Motor(int p)
-    : pin(p) {
-    pinMode(pin, OUTPUT);
-  }
+  Motor(int i) : index(i) {}
   void update() {
-    digitalWrite(pin, HIGH);
-    delayMicroseconds(Power);
-    digitalWrite(pin, LOW);
-    //delayMicroseconds(100);
+   int us = constrain((int)Power, 1000, 2000);
+    esc[index].write(us);   // non-blocking servo pulse
   }
 };
 
+
 float throttle = 1000;
-Motor m[] = { Motor(3), Motor(5), Motor(6), Motor(9) };  // +x +y -x -y
+// order: +x +y -x -y on pins 3,5,6,9
+Motor m[] = { Motor(0), Motor(1), Motor(2), Motor(3) };
 void motorchangetest(bool fast = false);
 
 // ------------------ SETUP ------------------
@@ -110,10 +110,16 @@ void setup() {
   Serial.println("Finished Calibrating IMU");
   delay(500);
   Serial.println("Starting Motor Calibration...");
-  // Motor warm-up
-  for (int i = 0; i < 100; i++) {
-    motorchangetest(true);
-    delayMicroseconds(1000);
+  // Attach ESCs
+  esc[0].attach(3);
+  esc[1].attach(5);
+  esc[2].attach(6);
+  esc[3].attach(9);
+
+  // Send minimum throttle to all ESCs for arming
+  for (int i = 0; i < 4; i++) {
+    m[i].Power = m[i].Initial = m[i].Final = 1000;
+    m[i].update();
   }
 
   Serial.println("Finished Motor Calibration");
@@ -188,7 +194,7 @@ void loop() {
         PID_x = PID_y = PID_z = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
       }
-      motorchangetest(true);
+      motorchangetest(false);
     }
 
     printLoopHz();
@@ -382,46 +388,14 @@ void PID_Z() {
 
 // ------------------ MOTOR UPDATE ------------------
 void motorchangetest(bool fast = false) {
-  if (fast) {
-    for (int i = 0; i < 4; i++) {
-      m[i].Power = constrain(m[i].Final, 1000, 2000);
-      m[i].update();
-      m[i].Initial = m[i].Power;
-    }
-    return;
-  }
-  // Step 1: Calculate smooth step from Initial to Final (80% of diff)
+  // Smoothing factor: 1.0 = jump directly to Final, 0.2 = smooth
+  float factor = fast ? 1.0f : 0.2f;
+
   for (int i = 0; i < 4; i++) {
-    m[i].Diff = 0.8f * (m[i].Final - m[i].Initial) / 4.0f;
-    m[i].Power = m[i].Initial;
-  }
-
-  // Phase 1: Initial to Final
-  for (int step = 0; step < 4; step++) {
-    for (int i = 0; i < 4; i++) {
-      m[i].Power += m[i].Diff;
-      m[i].Power = constrain(m[i].Power, 1000, 2000);
-      m[i].update();
-    }
-  }
-
-  // Step 2: Final to Throttle (20% of full adjustment)
-  for (int i = 0; i < 4; i++) {
-    m[i].Diff = 0.2f * (m[i].Final - m[i].Power) / 4.0f;
-  }
-
-  // Phase 2: Final to Throttle
-  for (int step = 0; step < 4; step++) {
-    for (int i = 0; i < 4; i++) {
-      m[i].Power += m[i].Diff;
-      m[i].Power = constrain(m[i].Power, 1000, 2000);
-      m[i].update();
-    }
-  }
-
-  // Update Initial for next round
-  for (int i = 0; i < 4; i++) {
-    m[i].Initial = m[i].Power;
+    float diff = m[i].Final - m[i].Initial;
+    m[i].Power  = m[i].Initial + factor * diff;  // move partway
+    m[i].Initial = m[i].Power;                   // next step starts here
+    m[i].update();                               // send to ESC (1000–2000 µs)
   }
 }
 
