@@ -399,6 +399,50 @@ void motorchangetest(bool fast = false) {
   }
 }
 
+/*void motorchangetest_old(bool fast = false) {
+  if (fast) {
+    for (int i = 0; i < 4; i++) {
+      m[i].Power = constrain(m[i].Final, 1000, 2000);
+      m[i].update();
+      m[i].Initial = m[i].Power;
+    }
+    return;
+  }
+  // Step 1: Calculate smooth step from Initial to Final (80% of diff)
+  for (int i = 0; i < 4; i++) {
+    m[i].Diff = 0.8f * (m[i].Final - m[i].Initial) / 4.0f;
+    m[i].Power = m[i].Initial;
+  }
+
+  // Phase 1: Initial to Final
+  for (int step = 0; step < 4; step++) {
+    for (int i = 0; i < 4; i++) {
+      m[i].Power += m[i].Diff;
+      m[i].Power = constrain(m[i].Power, 1000, 2000);
+      m[i].update();
+    }
+  }
+
+  // Step 2: Final to Throttle (20% of full adjustment)
+  for (int i = 0; i < 4; i++) {
+    m[i].Diff = 0.2f * (m[i].Final - m[i].Power) / 4.0f;
+  }
+
+  // Phase 2: Final to Throttle
+  for (int step = 0; step < 4; step++) {
+    for (int i = 0; i < 4; i++) {
+      m[i].Power += m[i].Diff;
+      m[i].Power = constrain(m[i].Power, 1000, 2000);
+      m[i].update();
+    }
+  }
+
+  // Update Initial for next round
+  for (int i = 0; i < 4; i++) {
+    m[i].Initial = m[i].Power;
+  }
+}*/
+
 // ------------------ RECV ------------------
 void recv() {
   uint8_t buf[RH_ASK_MAX_MESSAGE_LEN];
