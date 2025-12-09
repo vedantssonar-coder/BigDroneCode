@@ -102,7 +102,7 @@ void setup() {
   Wire.write(0x10);
   Wire.endTransmission();
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1B);// dmp
+  Wire.write(0x1B);  // dmp
   Wire.write(0x10);
   Wire.endTransmission();
   Serial.println("Started IMU  /  Calibrating...");
@@ -181,7 +181,7 @@ void loop() {
     if (landingInProgress) {
       land();
     } else {
-      PID_X();  
+      PID_X();
       PID_Y();
       //PID_Z();
       if (throttle <= 1050 && !landingInProgress) {
@@ -236,12 +236,16 @@ void IMU() {
   pitch = kalmanAngleY;
   yaw += gz * elapsedTime;
 
-  /*if (abs(roll - prev_roll) > 10)
+  if (abs(roll - prev_roll) > 10)
     roll = prev_roll;
   if (abs(roll - prev_pitch) > 10)
     pitch = prev_pitch;
   if (abs(roll - prev_yaw) > 10)
-    yaw = prev_yaw;*/
+    yaw = prev_yaw;
+
+  prev_roll = roll;
+  prev_pitch = pitch;
+  prev_yaw = yaw;
 }
 
 
