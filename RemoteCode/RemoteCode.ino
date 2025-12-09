@@ -1,3 +1,4 @@
+#include <RH_ASK.h>
 #ifdef RH_HAVE_HARDWARE_SPI
 #include <SPI.h>  // Not actually used but needed to compile
 #endif
