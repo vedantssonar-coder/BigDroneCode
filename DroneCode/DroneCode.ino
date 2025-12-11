@@ -7,8 +7,9 @@
 
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
-#define MAX_THROTTLE 1950  // Set to 2000 for full range
-#define TEST_MODE false    // Set to false for actual flight
+#define MAX_THROTTLE 1950      // Set to 2000 for full range
+#define TEST_MODE false        // Set to false for actual flight
+#define CALIBRATION_MODE false  // Set to false after calibration is done
 
 const int OFFSET[4] = { 0, 0, 0, 0 };  //{ -122, -50, -258, 73 }
 #define MIN_POWER 1000
@@ -87,6 +88,47 @@ float throttle = 1000;
 Motor m[] = { Motor(0), Motor(1), Motor(2), Motor(3) };
 void motorchangetest(bool fast = false);
 
+// ------------------ ESC CALIBRATION ------------------
+void esc_calibration() {
+  Serial.println("=== ESC THROTTLE RANGE CALIBRATION ===");
+  Serial.println("DISCONNECT BATTERY NOW!");
+  Serial.println("Waiting 3 seconds...");
+  delay(3000);
+
+  // Step 1: Send MAX throttle to all ESCs
+  Serial.println("\nStep 1: Sending MAX throttle (2000 µs)");
+  for (int i = 0; i < 4; i++) {
+    esc[i].write(2000);
+  }
+  
+  Serial.println("CONNECT BATTERY NOW - Listen for beeping");
+  Serial.println("You will hear: beep-beep-beep, beep-beep");
+  Serial.println("Wait 5 seconds for beeping to complete...");
+  delay(5000);
+  
+  // Step 2: Send MIN throttle to all ESCs
+  Serial.println("\nStep 2: Sending MIN throttle (1000 µs)");
+  for (int i = 0; i < 4; i++) {
+    esc[i].write(1000);
+  }
+  
+  Serial.println("Listen for final confirmation beeps (should be 3-4 quick beeps)");
+  Serial.println("Calibration complete!");
+  Serial.println("DISCONNECT BATTERY");
+  delay(5000);
+
+
+  // Hold at minimum throttle
+  while (true) {
+    for (int i = 0; i < 4; i++) {
+      m[i].Power = 1000;
+      m[i].update();
+    }
+    delay(100);
+  }
+}
+
+
 // ------------------ SETUP ------------------
 void setup() {
   Serial.begin(9600);
@@ -119,6 +161,12 @@ void setup() {
   esc[1].attach(5);
   esc[2].attach(6);
   esc[3].attach(9);
+
+  // Run calibration if enabled
+  if (CALIBRATION_MODE) {
+    esc_calibration();
+    // After calibration, continue with normal setup
+  }
 
   // Configuring
   for (int i = 0; i < 4; i++) {
@@ -159,7 +207,7 @@ void loop() {
     recv();
     static bool lastButton = 1;
     if (lastButton == 1 && button == 0) {
-      if (!armed) {
+      if (!armed && throttle<=1050) {
         armed = true;
         Serial.println("Drone ARMED");
         roll = pitch = yaw = 0;
@@ -529,6 +577,10 @@ void land() {
   // Disarm once motors are low enough
   if (m[0].Power <= 1030 && m[1].Power <= 1030 && m[2].Power <= 1030 && m[3].Power <= 1030) {
     Serial.println("Landing complete. Drone disarmed.");
+    for(int i=0;i<4;i++){
+      m[i].Power=1000;
+      m[i].update();
+    }
     armed = false;
     failsafeLanding = false;
     landingInProgress = false;
