@@ -8,7 +8,9 @@
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950  // Set to 2000 for full range
-#define TEST_MODE false     // Set to false for actual flight
+#define TEST_MODE false    // Set to false for actual flight
+const int OFFSET [4] = {500,0,0,0};
+const int test = 0;
 
 
 const int led = 7;   //+ve
@@ -70,10 +72,11 @@ class Motor {
 public:
   const int index;
   float Power = 1000, Initial = 1000, Final = 1000, Diff = 0;
-  Motor(int i) : index(i) {}
+  Motor(int i)
+    : index(i) {}
   void update() {
-   int us = constrain((int)Power, 1000, 2000);
-    esc[index].write(us);   // non-blocking servo pulse
+    int us = /*constrain(*/(int)Power/*, 500, 2000)*;
+    esc[index].write(us);  // non-blocking servo pulse
   }
 };
 
@@ -106,6 +109,11 @@ void setup() {
   Wire.write(0x10);
   Wire.endTransmission();
   Serial.println("Started IMU  /  Calibrating...");
+
+  digitalWrite(led, HIGH);
+  delay(1000);
+  digitalWrite(led, LOW);
+
   calculate_IMU_error();
   Serial.println("Finished Calibrating IMU");
   delay(500);
@@ -118,8 +126,11 @@ void setup() {
 
   // Send minimum throttle to all ESCs for arming
   for (int i = 0; i < 4; i++) {
-    m[i].Power = m[i].Initial = m[i].Final = 1000;
+    m[i].Power = m[i].Initial = m[i].Final = 850;
     m[i].update();
+  }
+  for (int i = 0; i < 100000; i++) {
+    m[test].Power = 1000+OFFSET[test];
   }
 
   Serial.println("Finished Motor Calibration");
@@ -197,7 +208,7 @@ void loop() {
       motorchangetest(false);
     }
 
-    printLoopHz();
+    //printLoopHz();
     //debug_output();
   }
   //delayMicroseconds(100);
@@ -209,7 +220,7 @@ void printLoopHz() {
   static unsigned long count = 0;
   count++;
   unsigned long now = millis();
-  if (now - lastPrint >= 1000) {   // every 1 s
+  if (now - lastPrint >= 1000) {  // every 1 s
     Serial.print("Loop Hz: ");
     Serial.println(count);
     count = 0;
@@ -337,7 +348,7 @@ void PID_X() {
 
   PID_x = kp_x * error + pid_i_x + pid_d_x;
   PID_x = constrain(PID_x, -400, 400);
-  m[0].Final = throttle + PID_x - 80;
+  m[0].Final = throttle + PID_x;
   m[2].Final = throttle - PID_x;
   m[0].Final = constrain(m[0].Final, 1000, 2000);
   m[2].Final = constrain(m[2].Final, 1000, 2000);
@@ -351,7 +362,7 @@ void PID_Y() {
   pid_d_y = kd_y * (error - previous_error_y) / elapsedTime;
   PID_y = kp_y * error + pid_i_y + pid_d_y;
   PID_y = constrain(PID_y, -400, 400);
-  m[1].Final = throttle + PID_y - 100;
+  m[1].Final = throttle + PID_y;
   m[3].Final = throttle - PID_y;
   m[1].Final = constrain(m[1].Final, 1000, 2000);
   m[3].Final = constrain(m[3].Final, 1000, 2000);
@@ -393,9 +404,9 @@ void motorchangetest(bool fast = false) {
 
   for (int i = 0; i < 4; i++) {
     float diff = m[i].Final - m[i].Initial;
-    m[i].Power  = m[i].Initial + factor * diff;  // move partway
-    m[i].Initial = m[i].Power;                   // next step starts here
-    m[i].update();                               // send to ESC (1000–2000 µs)
+    m[i].Power = m[i].Initial + factor * diff + OFFSET[i];  // move partway
+    m[i].Initial = m[i].Power;                              // next step starts here
+    m[i].update();                                          // send to ESC (1000–2000 µs)
   }
 }
 
