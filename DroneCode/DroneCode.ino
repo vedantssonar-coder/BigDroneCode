@@ -218,6 +218,7 @@ void loop() {
         if (throttle <= 1050) {
           armed = true;
           Serial.println("Drone ARMED");
+          prev_roll = prev_pitch = prev_yaw = 0;
           roll = pitch = yaw = 0;
           kalmanAngleX = 0;
           kalmanAngleY = 0;
@@ -263,7 +264,7 @@ void loop() {
     } else {
       PID_X();
       PID_Y();
-      //PID_Z();
+      PID_Z();
       if (throttle <= 1050 && !landingInProgress) {
         PID_x = PID_y = PID_z = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
@@ -272,7 +273,7 @@ void loop() {
     }
 
     //printLoopHz();
-    //debug_output();
+    debug_output();
   }
   //delayMicroseconds(100);
 }
@@ -523,8 +524,8 @@ void recv() {
   uint8_t len = sizeof(buf);
   if (driver.recv(buf, &len)) {
     slider = buf[0] + buf[1] + buf[2] + buf[3];
-    x = constrain(map(buf[4], 0, 255, -5, 7), -5, 5);
-    y = constrain(map(buf[5], 0, 255, -5, 7), -5, 5);
+    x = constrain(map(buf[4], 0, 255, -20, 22), -20, 20);
+    y = constrain(map(buf[5], 0, 255, -20, 22), -20, 20);
     button = buf[6];
     lastSignalTime = millis();  // Signal received
   }
