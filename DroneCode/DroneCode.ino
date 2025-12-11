@@ -7,8 +7,8 @@
 
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
-#define MAX_THROTTLE 1950      // Set to 2000 for full range
-#define TEST_MODE false        // Set to false for actual flight
+#define MAX_THROTTLE 1950       // Set to 2000 for full range
+#define TEST_MODE false         // Set to false for actual flight
 #define CALIBRATION_MODE false  // Set to false after calibration is done
 
 const int OFFSET[4] = { 0, 0, 0, 0 };  //{ -122, -50, -258, 73 }
@@ -100,18 +100,18 @@ void esc_calibration() {
   for (int i = 0; i < 4; i++) {
     esc[i].write(2000);
   }
-  
+
   Serial.println("CONNECT BATTERY NOW - Listen for beeping");
   Serial.println("You will hear: beep-beep-beep, beep-beep");
   Serial.println("Wait 5 seconds for beeping to complete...");
   delay(5000);
-  
+
   // Step 2: Send MIN throttle to all ESCs
   Serial.println("\nStep 2: Sending MIN throttle (1000 µs)");
   for (int i = 0; i < 4; i++) {
     esc[i].write(1000);
   }
-  
+
   Serial.println("Listen for final confirmation beeps (should be 3-4 quick beeps)");
   Serial.println("Calibration complete!");
   Serial.println("DISCONNECT BATTERY");
@@ -152,6 +152,9 @@ void setup() {
   Wire.write(0x10);
   Wire.endTransmission();
   Serial.println("Started IMU  /  Calibrating...");
+  digitalWrite(led, HIGH);
+  delay(2000);
+  digitalWrite(led, LOW);
   calculate_IMU_error();
   Serial.println("Finished Calibrating IMU");
   delay(500);
@@ -196,6 +199,9 @@ void setup() {
 // ------------------ LOOP ------------------
 void loop() {
   LedBlinker();
+  if (!TEST_MODE && !landingInProgress) {
+    throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
+  }
   if (TEST_MODE) {
     static unsigned long testStart = millis();
     unsigned long elapsed = millis() - testStart;
@@ -207,16 +213,28 @@ void loop() {
     recv();
     static bool lastButton = 1;
     if (lastButton == 1 && button == 0) {
-      if (!armed && throttle<=1050) {
-        armed = true;
-        Serial.println("Drone ARMED");
-        roll = pitch = yaw = 0;
-        kalmanAngleX = 0;
-        kalmanAngleY = 0;
-        biasX = biasY = 0;
-        pid_i_x = pid_i_y = 0;
-        previous_error_x = 0;
-        previous_error_y = 0;
+      if (!armed) {
+        // Only allow arming if throttle is below 1050
+        if (throttle <= 1050) {
+          armed = true;
+          Serial.println("Drone ARMED");
+          roll = pitch = yaw = 0;
+          kalmanAngleX = 0;
+          kalmanAngleY = 0;
+          biasX = biasY = 0;
+          pid_i_x = pid_i_y = 0;
+          previous_error_x = 0;
+          previous_error_y = 0;
+        } else {
+          Serial.println("Throttle too high! Set throttle below 1050 to arm.");
+          digitalWrite(led, HIGH);
+          delay(500);
+          digitalWrite(led, LOW);
+          delay(500);
+          digitalWrite(led, HIGH);
+          delay(500);
+          digitalWrite(led, LOW);
+        }
       } else if (!landingInProgress && millis() - lastLandingCommandTime > LANDING_COMMAND_COOLDOWN) {
         landingInProgress = true;
         landingStartTime = millis();
@@ -228,9 +246,7 @@ void loop() {
   }
 
   if (armed) {
-    if (!landingInProgress) {
-      throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
-    }
+
 
     IMU();
 
@@ -243,6 +259,7 @@ void loop() {
 
     if (landingInProgress) {
       land();
+
     } else {
       PID_X();
       PID_Y();
@@ -254,8 +271,8 @@ void loop() {
       motorchangetest(false);
     }
 
-    printLoopHz();
-    debug_output();
+    //printLoopHz();
+    //debug_output();
   }
   //delayMicroseconds(100);
 }
@@ -547,7 +564,7 @@ void land() {
   descentRate += 0.05;
   descentRate = constrain(descentRate, 2.0, 10.0);
 
-  if (millis() - lastStepTime > 100) {  // step interval: 100ms
+  if (millis() - lastStepTime > 200) {  // step interval: 100ms
     lastStepTime = millis();
     throttle = max(1000, throttle - descentRate);
   }
@@ -577,8 +594,8 @@ void land() {
   // Disarm once motors are low enough
   if (m[0].Power <= 1030 && m[1].Power <= 1030 && m[2].Power <= 1030 && m[3].Power <= 1030) {
     Serial.println("Landing complete. Drone disarmed.");
-    for(int i=0;i<4;i++){
-      m[i].Power=1000;
+    for (int i = 0; i < 4; i++) {
+      m[i].Power = 1000;
       m[i].update();
     }
     armed = false;
