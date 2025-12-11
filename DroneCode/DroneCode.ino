@@ -9,8 +9,9 @@
 #define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950  // Set to 2000 for full range
 #define TEST_MODE false    // Set to false for actual flight
-const int OFFSET[4] = { 500, 0, 0, 0 };
-const int test = 3;
+
+const int OFFSET[4] = {-122, -50, -258, 73 };
+const int test = 3; //motor number
 
 // Timer globals
 unsigned long currentTime = 0, previousTime = 0;
@@ -24,22 +25,19 @@ unsigned long landingStartTime = 0;
 unsigned long lastLandingCommandTime = 0;
 const unsigned long LANDING_COMMAND_COOLDOWN = 1000;  // ms
 
-
 // Remote
 RH_ASK driver;
 int slider = 0, x = 0, y = 0;
 bool button = 1;
 
 ServoTimer2 esc[4];
+
+// Declare Power as a global variable
+int Power = 1000;
+
 void update() {
-  int us = (int)Power;
-  esc[test].write(us);  // non-blocking servo pulse
+  esc[test].write(Power);  // non-blocking servo pulse
 }
-
-
-
-float throttle = 1000;
-// order: +x +y -x -y on pins 3,5,6,9
 
 // ------------------ SETUP ------------------
 void setup() {
@@ -54,21 +52,18 @@ void setup() {
 
   // Send minimum throttle to all ESCs for arming
   for (int i = 0; i < 4; i++) {
-    m[i].Power = m[i].Initial = m[i].Final = 850;
-    m[i].update();
+    esc[i].write(850);
   }
-  for (int i = 0; i < 100000; i++) {
-    m[test].Power = 1000 + OFFSET[test];
-  }
+  delay(2000); // Wait for ESCs to arm
 
   Serial.println("Finished Motor Calibration");
   driver.init();
-  Serial.println("Remote COntrol driver intialized");
+  Serial.println("Remote Control driver initialized");
   delay(20);
   Serial.println("Testing remote...");
   for (int i = 0; i < 20; i++) {
     recv();
-    debug_output();
+    // Comment out or implement debug_output if needed
   }
   Serial.println("Finished Testing remote");
   Serial.println("System ready");
@@ -78,10 +73,23 @@ void setup() {
 // ------------------ LOOP ------------------
 void loop() {
   recv();
+  if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');  // Read the full line
+    input.trim();                                 // Remove whitespace
+    if (input.length() > 0) {
+      int pwm = input.toInt();                    // Convert to integer
+      if (pwm >= 500 && pwm <= 3000) {    // Ensure within valid ESC range
+        Serial.print("Setting ESC to: ");
+        Serial.println(pwm);
+        Power = pwm;
+        update();
+      } else {
+        Serial.println("Invalid PWM value. Must be between 850 and 1950.");
+      }
+    }
+  }
   update();
 }
-
-
 
 // ------------------ RECV ------------------
 void recv() {
