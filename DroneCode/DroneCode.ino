@@ -576,7 +576,7 @@ void land() {
   IMU();
   PID_X();
   PID_Y();
-  //PID_Z();
+  PID_Z();
 
   // Clamp PID output when throttle is very low
   /*if (throttle < 1050) {
