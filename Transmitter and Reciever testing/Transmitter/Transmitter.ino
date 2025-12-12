@@ -1,10 +1,10 @@
 #include <RH_ASK.h>
-#include <SPI.h>  // Required by RadioHead
+#include <SPI.h>
 
-// Use default: TX on digital pin 12 for Arduino Uno
 RH_ASK driver;
 
 void setup() {
+  Serial.begin(9600); // Add Serial for debugging
   driver.init();
 }
 
@@ -12,5 +12,6 @@ void loop() {
   const char *msg = "Hello";
   driver.send((uint8_t *)msg, strlen(msg));
   driver.waitPacketSent();
+  Serial.println("Sent: Hello"); // Confirm transmission
   delay(1000);
 }

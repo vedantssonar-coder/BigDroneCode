@@ -1,7 +1,6 @@
 #include <RH_ASK.h>
-#include <SPI.h>  // Required by RadioHead
+#include <SPI.h>
 
-// Use default: RX on digital pin 11 for Arduino Uno
 RH_ASK driver;
 
 void setup() {
@@ -14,12 +13,11 @@ void loop() {
   uint8_t buflen = sizeof(buf);
 
   if (driver.recv(buf, &buflen)) {
-    // Add terminator to treat as C-string
     buf[buflen] = '\0';
     Serial.print("Received: ");
     Serial.println((char*)buf);
   }
-  else
-      Serial.println("not got yet");
+  // Remove or reduce "not got yet" printing to avoid flooding
+  // Serial.println("not got yet");
   delay(200);
 }
