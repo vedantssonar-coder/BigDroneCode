@@ -520,7 +520,7 @@ void motorchangetest(bool fast = false) {
 
 // ------------------ RECV ------------------
 void recv() {
-  uint8_t buf[RH_ASK_MAX_MESSAGE_LEN];
+  uint8_t buf[7/*RH_ASK_MAX_MESSAGE_LEN*/];
   uint8_t len = sizeof(buf);
   if (driver.recv(buf, &len)) {
     slider = buf[0] + buf[1] + buf[2] + buf[3];
