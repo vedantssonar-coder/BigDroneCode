@@ -140,16 +140,23 @@ void setup() {
   // IMU Init
   Serial.println("Starting IMU...");
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x6B);
-  Wire.write(0x00);
+  Wire.write(0x6B);  // PWR_MGMT_1
+  Wire.write(0x00);  // Wake up, use internal clock
   Wire.endTransmission();
+
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1C);
-  Wire.write(0x10);
+  Wire.write(0x1C);  // ACCEL_CONFIG
+  Wire.write(0x10);  // ±8g range
   Wire.endTransmission();
+
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1B);  // dmp
-  Wire.write(0x10);
+  Wire.write(0x1B);  // GYRO_CONFIG
+  Wire.write(0x10);  // ±1000°/s range
+  Wire.endTransmission();
+
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x1A);  // CONFIG (DLPF)
+  Wire.write(0x05);  // 5 Hz DLPF bandwidth (reduces vibration noise)
   Wire.endTransmission();
   Serial.println("Started IMU  /  Calibrating...");
   digitalWrite(led, HIGH);
@@ -193,7 +200,7 @@ void setup() {
   }
   Serial.println("Finished Testing remote");
   Serial.println("System ready");
-  delay(1000);
+  delay(5000);
 }
 
 // ------------------ LOOP ------------------
@@ -205,7 +212,8 @@ void loop() {
   if (TEST_MODE) {
     static unsigned long testStart = millis();
     unsigned long elapsed = millis() - testStart;
-    slider = constrain(map(elapsed, 0, 10000, 0, 250), 0, 250);
+    slider = constrain(map(elapsed, 0, 10000, 0, 200), 0, 1000);
+    throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
     armed = true;
     lastSignalTime = millis();
     button = 1;
