@@ -88,11 +88,12 @@ Motor m[] = { Motor(0), Motor(1), Motor(2), Motor(3) };
 void motorchangetest(bool fast = false);
 
 //pid tuner
+int check_PID=1;
 struct AutoTunerState {
   bool active = false;
   float targetSetpoint = 0;
-  float outputHigh = 500;    // Max motor power differential
-  float outputLow = -500;    // Min motor power differential
+  float outputHigh = 100;    // Max motor power differential
+  float outputLow = -100;    // Min motor power differential
   bool outputState = true;   // true = high, false = low
   
   unsigned long t1 = 0, t2 = 0;
@@ -235,11 +236,11 @@ void setup() {
 void loop() {
   LedBlinker();
   
-  if (!TEST_MODE && !landingInProgress) {
+  if (!TEST_MODE && !landingInProgress && !autoTuner.active) {
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
   }
   
-  if (TEST_MODE) {
+  if (TEST_MODE && !autoTuner.active) {
     static unsigned long testStart = millis();
     unsigned long elapsed = millis() - testStart;
     slider = constrain(map(elapsed, 0, 10000, 0, 200), 0, 1000);
@@ -285,7 +286,8 @@ void loop() {
 
   if (armed) {
 
-    if (!autoTuner.active) {
+    if (!autoTuner.active && check_PID == 1) {
+      throttle = TUNING_THROTTLE;
     startRelayAutoTuning(0); // For Roll
   }
     IMU();
@@ -820,6 +822,13 @@ void relayAutoTunerLoop(int axis) {
     m[0].Final = throttle - autoTuner.outputHigh;  // Decrease
     m[2].Final = throttle + autoTuner.outputHigh;
   }
+
+    // Constrain all motor values
+  for (int i = 0; i < 4; i++) {
+    m[i].Final = constrain(m[i].Final, 1000, 2000);
+  }
+}
+
 }
 
 
@@ -880,4 +889,5 @@ void finishAutoTuning() {
   // (Match your tuning axis here)
   
   landingInProgress = true;  // Land safely
+  check_PID = 0;
 }
