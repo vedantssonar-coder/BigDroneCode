@@ -281,7 +281,7 @@ void loop() {
     }
 
     //printLoopHz();
-    //debug_output();
+    debug_output();
   }
   //delayMicroseconds(100);
 }
