@@ -315,7 +315,7 @@ void loop() {
         PID_x = PID_y = PID_z = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
       }
-      motorchangetest(false);
+      motorchangetest(true);
     }
     //printLoopHz();
     debug_output();
@@ -814,11 +814,11 @@ void relayAutoTunerLoop(int axis) {
   
   // Apply relay output to motors
   if(autoTuner.outputState) {
-    m[0].Final += autoTuner.outputHigh;  // Increase certain motors
-    m[2].Final -= autoTuner.outputHigh;
+    m[0].Final = throttle + autoTuner.outputHigh;  // Increase certain motors
+    m[2].Final = throttle - autoTuner.outputHigh;
   } else {
-    m[0].Final -= autoTuner.outputHigh;  // Decrease
-    m[2].Final += autoTuner.outputHigh;
+    m[0].Final = throttle - autoTuner.outputHigh;  // Decrease
+    m[2].Final = throttle + autoTuner.outputHigh;
   }
 }
 
