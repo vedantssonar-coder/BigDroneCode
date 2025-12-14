@@ -88,28 +88,28 @@ Motor m[] = { Motor(0), Motor(1), Motor(2), Motor(3) };
 void motorchangetest(bool fast = false);
 
 //pid tuner
-int check_PID=1;
+int check_PID = 1;
 struct AutoTunerState {
   bool active = false;
   float targetSetpoint = 0;
-  float outputHigh = 100;    // Max motor power differential
-  float outputLow = -100;    // Min motor power differential
-  bool outputState = true;   // true = high, false = low
-  
+  float outputHigh = 100;   // Max motor power differential
+  float outputLow = -100;   // Min motor power differential
+  bool outputState = true;  // true = high, false = low
+
   unsigned long t1 = 0, t2 = 0;
   float tHigh = 0, tLow = 0;
   float maxValue = -999, minValue = 999;
-  
+
   float Ku = 0;  // Ultimate gain
   float Tu = 0;  // Period of oscillation
-  
+
   int cycleCount = 0;
   float pAverage = 0, iAverage = 0, dAverage = 0;
 };
 
 AutoTunerState autoTuner;
 
-const int TUNING_THROTTLE = 1150;  // Hover throttle 
+const int TUNING_THROTTLE = 1150;  // Hover throttle
 
 void startRelayAutoTuning(int axis);
 void relayAutoTunerLoop(int axis);
@@ -235,11 +235,11 @@ void setup() {
 // ------------------ LOOP ------------------
 void loop() {
   LedBlinker();
-  
+
   if (!TEST_MODE && !landingInProgress && !autoTuner.active) {
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
   }
-  
+
   if (TEST_MODE && !autoTuner.active) {
     static unsigned long testStart = millis();
     unsigned long elapsed = millis() - testStart;
@@ -288,8 +288,8 @@ void loop() {
 
     if (!autoTuner.active && check_PID == 1) {
       throttle = TUNING_THROTTLE;
-    startRelayAutoTuning(0); // For Roll
-  }
+      startRelayAutoTuning(0);  // For Roll
+    }
     IMU();
 
     // Auto-tuner: if active, run relay tuning instead of normal PID
@@ -745,16 +745,16 @@ void LedBlinker() {
 void startRelayAutoTuning(int axis) {
   Serial.println("\n========== RELAY AUTO-TUNING (Ziegler-Nichols) ==========");
   Serial.print("Starting auto-tune for axis: ");
-  
-  switch(axis) {
+
+  switch (axis) {
     case 0: Serial.println("ROLL"); break;
     case 1: Serial.println("PITCH"); break;
     case 2: Serial.println("YAW"); break;
   }
-  
+
   Serial.println("This will oscillate the drone for ~20-30 seconds.");
   Serial.println("Keep hands ready to disarm!");
-  
+
   autoTuner.active = true;
   autoTuner.cycleCount = 0;
   autoTuner.maxValue = -999;
@@ -765,57 +765,56 @@ void startRelayAutoTuning(int axis) {
 
 
 void relayAutoTunerLoop(int axis) {
-  if(!autoTuner.active) return;
-  
+  if (!autoTuner.active) return;
+
   float currentAngle = 0;
-  
-  if(axis == 0) currentAngle = roll;
-  else if(axis == 1) currentAngle = pitch;
-  else if(axis == 2) currentAngle = yaw;
-  
+
+  if (axis == 0) currentAngle = roll;
+  else if (axis == 1) currentAngle = pitch;
+  else if (axis == 2) currentAngle = yaw;
+
   // Track max/min values
   autoTuner.maxValue = max(autoTuner.maxValue, currentAngle);
   autoTuner.minValue = min(autoTuner.minValue, currentAngle);
-  
+
   // Relay switching: toggle when crossing setpoint
-  if(autoTuner.outputState && currentAngle >= autoTuner.targetSetpoint) {
+  if (autoTuner.outputState && currentAngle >= autoTuner.targetSetpoint) {
     // Switch to LOW
     autoTuner.outputState = false;
     autoTuner.t1 = micros();
     autoTuner.tHigh = autoTuner.t1 - autoTuner.t2;
-    
+
     Serial.print("Cycle ");
     Serial.print(autoTuner.cycleCount);
     Serial.print(": tHigh=");
     Serial.print(autoTuner.tHigh / 1000.0);
     Serial.println("ms");
-    
+
     autoTuner.maxValue = autoTuner.targetSetpoint;
-  } 
-  else if(!autoTuner.outputState && currentAngle <= autoTuner.targetSetpoint) {
+  } else if (!autoTuner.outputState && currentAngle <= autoTuner.targetSetpoint) {
     // Switch to HIGH
     autoTuner.outputState = true;
     autoTuner.t2 = micros();
     autoTuner.tLow = autoTuner.t2 - autoTuner.t1;
-    
+
     Serial.print("  tLow=");
     Serial.print(autoTuner.tLow / 1000.0);
     Serial.println("ms");
-    
+
     // Calculate Ziegler-Nichols coefficients
     calculateZNGains();
-    
+
     autoTuner.cycleCount++;
     autoTuner.minValue = autoTuner.targetSetpoint;
-    
+
     // Stop after 5-6 cycles
-    if(autoTuner.cycleCount >= 5) {
+    if (autoTuner.cycleCount >= 5) {
       finishAutoTuning();
     }
   }
-  
+
   // Apply relay output to motors
-  if(autoTuner.outputState) {
+  if (autoTuner.outputState) {
     m[0].Final = throttle + autoTuner.outputHigh;  // Increase certain motors
     m[2].Final = throttle - autoTuner.outputHigh;
   } else {
@@ -823,11 +822,10 @@ void relayAutoTunerLoop(int axis) {
     m[2].Final = throttle + autoTuner.outputHigh;
   }
 
-    // Constrain all motor values
+  // Constrain all motor values
   for (int i = 0; i < 4; i++) {
     m[i].Final = constrain(m[i].Final, 1000, 2000);
   }
-}
 
 }
 
@@ -837,31 +835,31 @@ void calculateZNGains() {
   // d = output amplitude, a = input amplitude
   float d = (autoTuner.outputHigh - autoTuner.outputLow) / 2.0;
   float a = (autoTuner.maxValue - autoTuner.minValue) / 2.0;
-  
-  if(a < 0.1) return;  // Avoid division errors
-  
+
+  if (a < 0.1) return;  // Avoid division errors
+
   float Ku = (4.0 * d) / (M_PI * a);
   float Tu = (autoTuner.tHigh + autoTuner.tLow) / 1000000.0;  // Convert to seconds
-  
+
   Serial.print("Ku=");
   Serial.print(Ku, 3);
   Serial.print(", Tu=");
   Serial.println(Tu, 3);
-  
+
   // Ziegler-Nichols coefficients (normal PID - quarter overshoot)
   float Kp = 0.6 * Ku;
   float Ki = (1.2 * Ku) / Tu;
   float Kd = (0.075 * Ku) * Tu;
-  
+
   Serial.print("  → Kp=");
   Serial.print(Kp, 4);
   Serial.print(", Ki=");
   Serial.print(Ki, 6);
   Serial.print(", Kd=");
   Serial.println(Kd, 4);
-  
+
   // Average with previous cycles
-  if(autoTuner.cycleCount > 1) {
+  if (autoTuner.cycleCount > 1) {
     autoTuner.pAverage += Kp;
     autoTuner.iAverage += Ki;
     autoTuner.dAverage += Kd;
@@ -871,12 +869,12 @@ void calculateZNGains() {
 
 void finishAutoTuning() {
   autoTuner.active = false;
-  
+
   // Calculate averages
   float finalKp = autoTuner.pAverage / (autoTuner.cycleCount - 1);
   float finalKi = autoTuner.iAverage / (autoTuner.cycleCount - 1);
   float finalKd = autoTuner.dAverage / (autoTuner.cycleCount - 1);
-  
+
   Serial.println("\n========== TUNING COMPLETE ==========");
   Serial.print("Final Kp: ");
   Serial.println(finalKp, 4);
@@ -884,10 +882,10 @@ void finishAutoTuning() {
   Serial.println(finalKi, 6);
   Serial.print("Final Kd: ");
   Serial.println(finalKd, 4);
-  
+
   // Copy to appropriate axis
   // (Match your tuning axis here)
-  
+
   landingInProgress = true;  // Land safely
   check_PID = 0;
 }
