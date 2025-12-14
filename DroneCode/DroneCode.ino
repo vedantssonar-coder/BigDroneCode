@@ -821,12 +821,12 @@ void relayAutoTunerLoop(int axis) {
     m[0].Final = throttle - autoTuner.outputHigh;  // Decrease
     m[2].Final = throttle + autoTuner.outputHigh;
   }
-
+  m[1].Final = throttle;
+  m[3].Final = throttle;
   // Constrain all motor values
   for (int i = 0; i < 4; i++) {
     m[i].Final = constrain(m[i].Final, 1000, 2000);
   }
-
 }
 
 
