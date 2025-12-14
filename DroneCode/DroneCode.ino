@@ -281,7 +281,7 @@ void loop() {
     }
 
     //printLoopHz();
-    debug_output();
+    //debug_output();
   }
   //delayMicroseconds(100);
 }
@@ -528,17 +528,17 @@ void motorchangetest(bool fast = false) {
 
 // ------------------ RECV ------------------
 void recv() {
-  uint8_t buf[7/*RH_ASK_MAX_MESSAGE_LEN*/];
+  uint8_t buf[7 /*RH_ASK_MAX_MESSAGE_LEN*/];
   uint8_t len = sizeof(buf);
   if (driver.recv(buf, &len)) {
     if (len == 7) {
       // Decode the 7 bytes correctly
-      slider = buf[0];  // Use only the first slider value
+      slider = buf[0] + buf[1] + buf[2] + buf[3];  // Use only the first slider value
       x = constrain(map(buf[4], 0, 255, -20, 22), -20, 20);
       y = constrain(map(buf[5], 0, 255, -20, 22), -20, 20);
       button = buf[6];
       lastSignalTime = millis();
-      
+
       // Debug: Print received data
       /*Serial.print("RX: ");
       Serial.print(buf[0]); Serial.print(" ");
