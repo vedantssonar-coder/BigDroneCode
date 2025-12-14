@@ -87,6 +87,35 @@ float throttle = 1000;
 Motor m[] = { Motor(0), Motor(1), Motor(2), Motor(3) };
 void motorchangetest(bool fast = false);
 
+//pid tuner
+struct AutoTunerState {
+  bool active = false;
+  float targetSetpoint = 0;
+  float outputHigh = 500;    // Max motor power differential
+  float outputLow = -500;    // Min motor power differential
+  bool outputState = true;   // true = high, false = low
+  
+  unsigned long t1 = 0, t2 = 0;
+  float tHigh = 0, tLow = 0;
+  float maxValue = -999, minValue = 999;
+  
+  float Ku = 0;  // Ultimate gain
+  float Tu = 0;  // Period of oscillation
+  
+  int cycleCount = 0;
+  float pAverage = 0, iAverage = 0, dAverage = 0;
+};
+
+AutoTunerState autoTuner;
+
+const int TUNING_THROTTLE = 1150;  // Hover throttle 
+
+void startRelayAutoTuning(int axis);
+void relayAutoTunerLoop(int axis);
+void calculateZNGains();
+void finishAutoTuning();
+
+
 // ------------------ ESC CALIBRATION ------------------
 void esc_calibration() {
   Serial.println("=== ESC THROTTLE RANGE CALIBRATION ===");
@@ -255,7 +284,7 @@ void loop() {
   }
 
   if (armed) {
-    
+
     if (!autoTuner.active) {
     startRelayAutoTuning(0); // For Roll
   }
@@ -710,25 +739,6 @@ void LedBlinker() {
         !  ! !  - Signal lost
 */
 
-struct AutoTunerState {
-  bool active = false;
-  float targetSetpoint = 0;
-  float outputHigh = 500;    // Max motor power differential
-  float outputLow = -500;    // Min motor power differential
-  bool outputState = true;   // true = high, false = low
-  
-  unsigned long t1 = 0, t2 = 0;
-  float tHigh = 0, tLow = 0;
-  float maxValue = -999, minValue = 999;
-  
-  float Ku = 0;  // Ultimate gain
-  float Tu = 0;  // Period of oscillation
-  
-  int cycleCount = 0;
-  float pAverage = 0, iAverage = 0, dAverage = 0;
-};
-
-AutoTunerState autoTuner;
 
 void startRelayAutoTuning(int axis) {
   Serial.println("\n========== RELAY AUTO-TUNING (Ziegler-Nichols) ==========");
