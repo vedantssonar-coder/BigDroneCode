@@ -92,8 +92,8 @@ int check_PID = 1;
 struct AutoTunerState {
   bool active = false;
   float targetSetpoint = 0;
-  float outputHigh = 100;   // Max motor power differential
-  float outputLow = -100;   // Min motor power differential
+  float outputHigh = 10;   // Max motor power differential
+  float outputLow = -10;   // Min motor power differential
   bool outputState = true;  // true = high, false = low
 
   unsigned long t1 = 0, t2 = 0;
@@ -109,7 +109,7 @@ struct AutoTunerState {
 
 AutoTunerState autoTuner;
 
-const int TUNING_THROTTLE = 1150;  // Hover throttle
+const int TUNING_THROTTLE = 1650;  // Hover throttle
 
 void startRelayAutoTuning(int axis);
 void relayAutoTunerLoop(int axis);
@@ -287,6 +287,12 @@ void loop() {
   if (armed) {
 
     if (!autoTuner.active && check_PID == 1) {
+      throttle = 1000;
+      while (throttle <= 550) {
+        motorchangetest(true);
+        throttle += 50;
+        delay(100);
+      }
       throttle = TUNING_THROTTLE;
       startRelayAutoTuning(0);  // For Roll
     }
