@@ -73,11 +73,14 @@ void pollChannels() {
 
   int pins[4] = {CH3_PIN, CH4_PIN, CH5_PIN, CH6_PIN};
   for (int i = 0; i < 4; i++) {
-    if (digitalRead(pins[i]) == HIGH && state[i] == 0) {
+    int pin = pins[i];
+    int idx = i + 2; // ch[2] for CH3_PIN, etc.
+
+    if (digitalRead(pin) == HIGH && state[i] == 0) {
       state[i] = 1;
       lastTime[i] = micros();
-    } else if (digitalRead(pins[i]) == LOW && state[i] == 1) {
-      ch[i+2].pulseWidth = micros() - lastTime[i];
+    } else if (digitalRead(pin) == LOW && state[i] == 1) {
+      ch[idx].pulseWidth = micros() - lastTime[i];
       state[i] = 0;
     }
   }
