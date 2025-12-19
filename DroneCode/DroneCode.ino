@@ -15,10 +15,10 @@ const int OFFSET[4] = { 0, 0, 0, 0 };  //{ -122, -50, -258, 73 }
 #define MIN_POWER 1000
 #define MAX_POWER 2000
 
-const int led = 7;   //+ve
-const int led1 = 8;  //-ve
+const int led = 12;   //+ve
+const int led1 = 13;  //-ve
 
-bool armed = false;
+bool armed = true;
 
 // Timer globals
 unsigned long currentTime = 0, previousTime = 0;
@@ -247,10 +247,10 @@ void setup() {
   Serial.println("Starting Motor Calibration...");
 
   // Attach ESCs
-  esc[0].attach(3);
-  esc[1].attach(5);
-  esc[2].attach(6);
-  esc[3].attach(9);
+  esc[0].attach(8);
+  esc[1].attach(9);
+  esc[2].attach(10);
+  esc[3].attach(11);
 
   // Run calibration if enabled
   if (CALIBRATION_MODE) {
@@ -285,6 +285,7 @@ void setup() {
 
 // ------------------ LOOP ------------------
 void loop() {
+  
   LedBlinker();
   if (!TEST_MODE && !landingInProgress) {
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
