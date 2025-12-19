@@ -89,9 +89,9 @@ int slider = 0, x = 0, y = 0;
 bool button = 1;
 
 // ===================== FlySky CT6B RECEIVER (PWM channels) =====================
-#define CH1_PIN 2  // Throttle
+#define CH1_PIN 4  // Throttle
 #define CH2_PIN 3  // Roll (x)
-#define CH3_PIN 4  // Pitch (y)
+#define CH3_PIN 2  // Pitch (y)
 #define CH4_PIN 5  // Yaw (unused here)
 #define CH5_PIN 6  // Arm / mode switch (button)
 #define CH6_PIN 7  // Aux (optional)
@@ -285,7 +285,7 @@ void setup() {
 
 // ------------------ LOOP ------------------
 void loop() {
-  
+
   LedBlinker();
   if (!TEST_MODE && !landingInProgress) {
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
@@ -293,10 +293,11 @@ void loop() {
   if (TEST_MODE) {
     static unsigned long testStart = millis();
     unsigned long elapsed = millis() - testStart;
-    slider = constrain(map(elapsed, 0, 10000, 0, 200), 0, 1000);
+    //slider = constrain(map(elapsed, 0, 10000, 0, 200), 0, 1000);
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
     armed = true;
     lastSignalTime = millis();
+    recv();
     button = 1;
   } else {
     recv();
@@ -362,7 +363,7 @@ void loop() {
     }
 
     //printLoopHz();
-    //debug_output();
+    debug_output();
   }
   //delayMicroseconds(100);
 }
