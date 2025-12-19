@@ -1,12 +1,12 @@
 #include <ServoTimer2.h>
 
 // Define pins for FlySky CT6B receiver
-#define CH1_PIN 4  // Throttle
-#define CH2_PIN 3  // Roll
-#define CH3_PIN 2  // Pitch
-#define CH4_PIN 5  // Yaw
-#define CH5_PIN 6  // Arm / mode switch
-#define CH6_PIN 7  // Aux
+#define CH1_PIN 2  // Throttle (interrupt)
+#define CH2_PIN 3  // Roll (interrupt)
+#define CH3_PIN 4  // Pitch (polling)
+#define CH4_PIN 5  // Yaw (polling)
+#define CH5_PIN 6  // Arm / mode switch (polling)
+#define CH6_PIN 7  // Aux (polling)
 
 // PWM value ranges
 #define PWM_MIN 1000
@@ -22,7 +22,7 @@ struct ChannelData {
 
 ChannelData ch[6];
 
-// Interrupt Service Routines for each channel
+// Interrupt Service Routines for pins 2 and 3
 void ch1_ISR() {
   if (digitalRead(CH1_PIN)) ch[0].risingEdge = micros();
   else ch[0].pulseWidth = micros() - ch[0].risingEdge;
@@ -30,22 +30,6 @@ void ch1_ISR() {
 void ch2_ISR() {
   if (digitalRead(CH2_PIN)) ch[1].risingEdge = micros();
   else ch[1].pulseWidth = micros() - ch[1].risingEdge;
-}
-void ch3_ISR() {
-  if (digitalRead(CH3_PIN)) ch[2].risingEdge = micros();
-  else ch[2].pulseWidth = micros() - ch[2].risingEdge;
-}
-void ch4_ISR() {
-  if (digitalRead(CH4_PIN)) ch[3].risingEdge = micros();
-  else ch[3].pulseWidth = micros() - ch[3].risingEdge;
-}
-void ch5_ISR() {
-  if (digitalRead(CH5_PIN)) ch[4].risingEdge = micros();
-  else ch[4].pulseWidth = micros() - ch[4].risingEdge;
-}
-void ch6_ISR() {
-  if (digitalRead(CH6_PIN)) ch[5].risingEdge = micros();
-  else ch[5].pulseWidth = micros() - ch[5].risingEdge;
 }
 
 // Function to map PWM value to output range
@@ -80,10 +64,23 @@ void flyskyInit() {
 
   attachInterrupt(digitalPinToInterrupt(CH1_PIN), ch1_ISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(CH2_PIN), ch2_ISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(CH3_PIN), ch3_ISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(CH4_PIN), ch4_ISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(CH5_PIN), ch5_ISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(CH6_PIN), ch6_ISR, CHANGE);
+}
+
+// Polling function for pins 4–7
+void pollChannels() {
+  static bool state[4] = {0};
+  static unsigned long lastTime[4] = {0};
+
+  int pins[4] = {CH3_PIN, CH4_PIN, CH5_PIN, CH6_PIN};
+  for (int i = 0; i < 4; i++) {
+    if (digitalRead(pins[i]) == HIGH && state[i] == 0) {
+      state[i] = 1;
+      lastTime[i] = micros();
+    } else if (digitalRead(pins[i]) == LOW && state[i] == 1) {
+      ch[i+2].pulseWidth = micros() - lastTime[i];
+      state[i] = 0;
+    }
+  }
 }
 
 void setup() {
@@ -93,13 +90,16 @@ void setup() {
 }
 
 void loop() {
+  // Poll pins 4–7
+  pollChannels();
+
   // Read and print all channel values
   int throttle = readChannel(0, 0, 1000);
-  int roll = readChannel(1, -20, 20);
-  int pitch = readChannel(2, -20, 20);
-  int yaw = readChannel(3, -20, 20);
+  int roll = readChannel(1, 0, 1000);
+  int pitch = readChannel(2, 0, 1000);
+  int yaw = readChannel(3, 0, 1000);
   bool button = readSwitch(4);
-  int aux = readChannel(5, 0, 100);
+  int aux = readChannel(5, 0, 1000);
 
   Serial.print("Throttle: ");
   Serial.print(throttle);
