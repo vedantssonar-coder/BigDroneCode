@@ -1,5 +1,5 @@
 #include <Wire.h>
-#include <RH_ASK.h>
+
 #include <ServoTimer2.h>
 #ifdef RH_HAVE_HARDWARE_SPI
 #include <SPI.h>  // Needed to compile RH_ASK
@@ -62,11 +62,6 @@ float previous_error_z = 0;
 const float kp_z = 2.0, ki_z = 0.005, kd_z = 1.0;
 const float d_angle_z = 0;  // Desired yaw angle (usually 0 for stability)
 
-// Remote
-RH_ASK driver;
-int slider = 0, x = 0, y = 0;
-bool button = 1;
-
 ServoTimer2 esc[4];
 
 // Motor Class
@@ -87,6 +82,90 @@ float throttle = 1000;
 // order: +x +y -x -y on pins 3,5,6,9
 Motor m[] = { Motor(0), Motor(1), Motor(2), Motor(3) };
 void motorchangetest(bool fast = false);
+
+// Remote
+
+int slider = 0, x = 0, y = 0;
+bool button = 1;
+
+// ===================== FlySky CT6B RECEIVER (PWM channels) =====================
+#define CH1_PIN 2   // Throttle
+#define CH2_PIN 3   // Roll (x)
+#define CH3_PIN 4   // Pitch (y)
+#define CH4_PIN 5   // Yaw (unused here)
+#define CH5_PIN 6   // Arm / mode switch (button)
+#define CH6_PIN 7   // Aux (optional)
+
+#define PWM_MIN 1000
+#define PWM_MAX 2000
+#define PWM_MID 1500
+#define PWM_DEADZONE 50
+
+struct ChannelData {
+  volatile unsigned long risingEdge;
+  volatile int pulseWidth;
+};
+
+ChannelData ch[6];
+
+// ISRs for each channel (RISING/FALLING edge measurement)
+void ch1_ISR() {
+  if (digitalRead(CH1_PIN)) ch[0].risingEdge = micros();
+  else ch[0].pulseWidth = micros() - ch[0].risingEdge;
+}
+void ch2_ISR() {
+  if (digitalRead(CH2_PIN)) ch[1].risingEdge = micros();
+  else ch[1].pulseWidth = micros() - ch[1].risingEdge;
+}
+void ch3_ISR() {
+  if (digitalRead(CH3_PIN)) ch[2].risingEdge = micros();
+  else ch[2].pulseWidth = micros() - ch[2].risingEdge;
+}
+void ch4_ISR() {
+  if (digitalRead(CH4_PIN)) ch[3].risingEdge = micros();
+  else ch[3].pulseWidth = micros() - ch[3].risingEdge;
+}
+void ch5_ISR() {
+  if (digitalRead(CH5_PIN)) ch[4].risingEdge = micros();
+  else ch[4].pulseWidth = micros() - ch[4].risingEdge;
+}
+void ch6_ISR() {
+  if (digitalRead(CH6_PIN)) ch[5].risingEdge = micros();
+  else ch[5].pulseWidth = micros() - ch[5].risingEdge;
+}
+
+int mapPWM(int v, int outMin, int outMax) {
+  v = constrain(v, PWM_MIN, PWM_MAX);
+  if (abs(v - PWM_MID) < PWM_DEADZONE) v = PWM_MID;
+  return map(v, PWM_MIN, PWM_MAX, outMin, outMax);
+}
+
+int readChannel(int idx, int outMin, int outMax) {
+  int pw = ch[idx].pulseWidth;
+  if (pw < PWM_MIN || pw > PWM_MAX) return outMin;
+  return mapPWM(pw, outMin, outMax);
+}
+
+bool readSwitch(int idx) {
+  int pw = ch[idx].pulseWidth;
+  if (pw < PWM_MIN || pw > PWM_MAX) return false;
+  return (pw > PWM_MID);
+}
+
+void flyskyInit() {
+  pinMode(CH1_PIN, INPUT);
+  pinMode(CH2_PIN, INPUT);
+  pinMode(CH3_PIN, INPUT);
+  pinMode(CH4_PIN, INPUT);
+  pinMode(CH5_PIN, INPUT);
+  pinMode(CH6_PIN, INPUT);
+
+  attachInterrupt(digitalPinToInterrupt(CH1_PIN), ch1_ISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(CH2_PIN), ch2_ISR, CHANGE);
+  // CH3–CH6 on Uno use pin-change interrupts; simplest is to poll in loop
+  // or move to interrupt-capable pins on boards like Mega.
+}
+
 
 // ------------------ ESC CALIBRATION ------------------
 void esc_calibration() {
@@ -166,6 +245,7 @@ void setup() {
   Serial.println("Finished Calibrating IMU");
   delay(500);
   Serial.println("Starting Motor Calibration...");
+  
   // Attach ESCs
   esc[0].attach(3);
   esc[1].attach(5);
