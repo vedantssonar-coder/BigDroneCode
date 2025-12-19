@@ -66,23 +66,24 @@ void flyskyInit() {
   attachInterrupt(digitalPinToInterrupt(CH2_PIN), ch2_ISR, CHANGE);
 }
 
-// Polling function for pins 4–7
+// Polling function for pins 4–7 using a different logic
 void pollChannels() {
-  static bool state[4] = {0};
-  static unsigned long lastTime[4] = {0};
-
+  static unsigned long lastRising[4] = {0};
+  static bool lastState[4] = {LOW};
   int pins[4] = {CH3_PIN, CH4_PIN, CH5_PIN, CH6_PIN};
+  int idxs[4] = {4, 5, 6, 7}; // ch[2] for CH3_PIN, etc.
+
   for (int i = 0; i < 4; i++) {
     int pin = pins[i];
-    int idx = i + 2; // ch[2] for CH3_PIN, etc.
+    int idx = idxs[i];
+    int currentState = digitalRead(pin);
 
-    if (digitalRead(pin) == HIGH && state[i] == 0) {
-      state[i] = 1;
-      lastTime[i] = micros();
-    } else if (digitalRead(pin) == LOW && state[i] == 1) {
-      ch[idx].pulseWidth = micros() - lastTime[i];
-      state[i] = 0;
+    if (currentState == HIGH && lastState[i] == LOW) {
+      lastRising[i] = micros();
+    } else if (currentState == LOW && lastState[i] == HIGH) {
+      ch[idx].pulseWidth = micros() - lastRising[i];
     }
+    lastState[i] = currentState;
   }
 }
 
@@ -101,8 +102,9 @@ void loop() {
   int roll = readChannel(1, 0, 1000);
   int pitch = readChannel(2, 0, 1000);
   int yaw = readChannel(3, 0, 1000);
-  bool button = readSwitch(4);
+  int button = readSwitch(4);
   int aux = readChannel(5, 0, 1000);
+  //int aux = digitalRead(4);
 
   Serial.print("Throttle: ");
   Serial.print(throttle);
