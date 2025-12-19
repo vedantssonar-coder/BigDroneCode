@@ -89,12 +89,12 @@ int slider = 0, x = 0, y = 0;
 bool button = 1;
 
 // ===================== FlySky CT6B RECEIVER (PWM channels) =====================
-#define CH1_PIN 2   // Throttle
-#define CH2_PIN 3   // Roll (x)
-#define CH3_PIN 4   // Pitch (y)
-#define CH4_PIN 5   // Yaw (unused here)
-#define CH5_PIN 6   // Arm / mode switch (button)
-#define CH6_PIN 7   // Aux (optional)
+#define CH1_PIN 2  // Throttle
+#define CH2_PIN 3  // Roll (x)
+#define CH3_PIN 4  // Pitch (y)
+#define CH4_PIN 5  // Yaw (unused here)
+#define CH5_PIN 6  // Arm / mode switch (button)
+#define CH6_PIN 7  // Aux (optional)
 
 #define PWM_MIN 1000
 #define PWM_MAX 2000
@@ -245,7 +245,7 @@ void setup() {
   Serial.println("Finished Calibrating IMU");
   delay(500);
   Serial.println("Starting Motor Calibration...");
-  
+
   // Attach ESCs
   esc[0].attach(3);
   esc[1].attach(5);
@@ -270,7 +270,7 @@ void setup() {
     }
 
   Serial.println("Finished Motor Calibration");
-  driver.init();
+  flyskyInit();
   Serial.println("Remote COntrol driver intialized");
   delay(20);
   Serial.println("Testing remote...");
@@ -564,18 +564,20 @@ void motorchangetest(bool fast = false) {
 
 // ------------------ RECV ------------------
 void recv() {
-  uint8_t buf[7 /*RH_ASK_MAX_MESSAGE_LEN*/];
-  uint8_t len = sizeof(buf);
-  if (driver.recv(buf, &len)) {
-    if (len == 7) {
-      // Decode the 7 bytes correctly
-      slider = buf[0] + buf[1] + buf[2] + buf[3];  // Use only the first slider value
-      x = constrain(map(buf[4], 0, 255, -20, 22), -20, 20);
-      y = constrain(map(buf[5], 0, 255, -20, 22), -20, 20);
-      button = buf[6];
-      lastSignalTime = millis();
-    }
-  }
+  // Throttle: CH1 → slider (0–1000)
+  int thr = readChannel(0, 0, 1000);
+  slider = thr;
+
+  // Roll: CH2 → x
+  x = readChannel(1, -20, 20);
+
+  // Pitch: CH3 → y
+  y = readChannel(2, -20, 20);
+
+  // Switch: CH5 → button (1/0)
+  button = readSwitch(4) ? 1 : 0;
+
+  lastSignalTime = millis();
 }
 
 // ------------------ LAND ------------------
