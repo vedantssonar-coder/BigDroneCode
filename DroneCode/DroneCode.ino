@@ -8,7 +8,7 @@
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950       // Set to 2000 for full range
-#define TEST_MODE true         // Set to false for actual flight
+#define TEST_MODE true          // Set to false for actual flight
 #define CALIBRATION_MODE false  // Set to false after calibration is done
 
 const int OFFSET[4] = { 0, 0, 0, 0 };  //{ -122, -50, -258, 73 }
@@ -52,8 +52,8 @@ float PID_x = 0, PID_y = 0;
 float pid_p_x = 0, pid_i_x = 0, pid_d_x = 0;
 float pid_p_y = 0, pid_i_y = 0, pid_d_y = 0;
 float previous_error_x = 0, previous_error_y = 0;
-const float kp_x = 2.5, ki_x = 0.005, kd_x = 1.2;
-const float kp_y = 2.5, ki_y = 0.005, kd_y = 1.2;
+const float kp_x = 5, ki_x = 0.005, kd_x = 1.2;
+const float kp_y = 5, ki_y = 0.005, kd_y = 1.2;
 const float d_angle_x = 0, d_angle_y = 0;
 
 float PID_z = 0;
@@ -292,6 +292,11 @@ void setup() {
   delay(5000);
 }
 
+const int BUFFER_SIZE = 20;
+char buffer[BUFFER_SIZE];
+int bufferIndex = 0;
+float receivedNumber = 0.0;
+
 // ------------------ LOOP ------------------
 void loop() {
 
@@ -302,11 +307,14 @@ void loop() {
   if (TEST_MODE) {
     static unsigned long testStart = millis();
     unsigned long elapsed = millis() - testStart;
-    //slider = constrain(map(elapsed, 0, 10000, 0, 200), 0, 1000);
+    //slider = constrain(map(elapsed, 0, 500, 0, 200), 0, 50);
+    //slider=200;
+    SerialReader();
+    slider = (int)receivedNumber;
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
     armed = true;
     lastSignalTime = millis();
-    recv();
+
     button = 1;
   } else {
     recv();
@@ -368,12 +376,19 @@ void loop() {
         PID_x = PID_y = PID_z = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
       }
-      motorchangetest(false);
+      motorchangetest(true);
     }
 
     //printLoopHz();
-    debug_output();
-    /*Serial.print(millis());
+    //debug_output();
+    Serial.print(millis());
+    Serial.print(m[0].Power);
+    Serial.print("/");
+    Serial.print(m[1].Power);
+    Serial.print("/");
+    Serial.print(m[2].Power);
+    Serial.print("/");
+    Serial.print(m[3].Power);
     Serial.print(",");
     Serial.print(PID_x);
     Serial.print(",");
@@ -381,10 +396,27 @@ void loop() {
     Serial.print(",");
     Serial.print(roll);
     Serial.print(",");
-    Serial.println(pitch);*/
-
+    Serial.println(pitch);
   }
   //delayMicroseconds(100);
+}
+
+void SerialReader() {
+  while (Serial.available() > 0 && bufferIndex < BUFFER_SIZE - 1) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      buffer[bufferIndex] = '\0';     // Null-terminate
+      receivedNumber = atof(buffer);  // Parse to float (handles int too)
+      Serial.print("Received number: ");
+      Serial.println(receivedNumber, 2);  // Print with 2 decimals
+
+
+
+      bufferIndex = 0;  // Reset
+    } else {
+      buffer[bufferIndex++] = c;
+    }
+  }
 }
 
 
@@ -514,10 +546,10 @@ void calculate_IMU_error() {
 
 // ------------------ PID ------------------
 void PID_X() {
-  float error = roll - prev_roll;
+  float error = x - roll;
   if (abs(error) < 1) error = 0;  //pid_i_x += ki_x * error;
   pid_i_x = constrain(pid_i_x, -50, 50);
-  pid_d_x = kd_x * (error - previous_error_x) / elapsedTime;
+  pid_d_x = -kd_x * (error - previous_error_x) / elapsedTime;
 
   PID_x = kp_x * error + pid_i_x + pid_d_x;
   PID_x = constrain(PID_x, -400, 400);
@@ -529,7 +561,7 @@ void PID_X() {
 }
 
 void PID_Y() {
-  float error = pitch - prev_pitch;
+  float error = y - pitch;
   if (abs(error) < 1) error = 0;  // pid_i_y += ki_y * error;
   pid_i_y = constrain(pid_i_y, -50, 50);
   pid_d_y = kd_y * (error - previous_error_y) / elapsedTime;
