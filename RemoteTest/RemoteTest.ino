@@ -1,12 +1,13 @@
+#include <PinChangeInterrupt.h>
 #include <ServoTimer2.h>
 
 // Define pins for FlySky CT6B receiver
 #define CH1_PIN 2  // Throttle (interrupt)
 #define CH2_PIN 3  // Roll (interrupt)
-#define CH3_PIN 4  // Pitch (polling)
-#define CH4_PIN 5  // Yaw (polling)
-#define CH5_PIN 6  // Arm / mode switch (polling)
-#define CH6_PIN 7  // Aux (polling)
+#define CH3_PIN 4  // Pitch (pin change interrupt)
+#define CH4_PIN 5  // Yaw (pin change interrupt)
+#define CH5_PIN 6  // Arm / mode switch (pin change interrupt)
+#define CH6_PIN 7  // Aux (pin change interrupt)
 
 // PWM value ranges
 #define PWM_MIN 1000
@@ -30,6 +31,24 @@ void ch1_ISR() {
 void ch2_ISR() {
   if (digitalRead(CH2_PIN)) ch[1].risingEdge = micros();
   else ch[1].pulseWidth = micros() - ch[1].risingEdge;
+}
+
+// Pin change interrupt for pins 4–7
+void ch3_ISR() {
+  if (digitalRead(CH3_PIN)) ch[2].risingEdge = micros();
+  else ch[2].pulseWidth = micros() - ch[2].risingEdge;
+}
+void ch4_ISR() {
+  if (digitalRead(CH4_PIN)) ch[3].risingEdge = micros();
+  else ch[3].pulseWidth = micros() - ch[3].risingEdge;
+}
+void ch5_ISR() {
+  if (digitalRead(CH5_PIN)) ch[4].risingEdge = micros();
+  else ch[4].pulseWidth = micros() - ch[4].risingEdge;
+}
+void ch6_ISR() {
+  if (digitalRead(CH6_PIN)) ch[5].risingEdge = micros();
+  else ch[5].pulseWidth = micros() - ch[5].risingEdge;
 }
 
 // Function to map PWM value to output range
@@ -64,27 +83,10 @@ void flyskyInit() {
 
   attachInterrupt(digitalPinToInterrupt(CH1_PIN), ch1_ISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(CH2_PIN), ch2_ISR, CHANGE);
-}
-
-// Polling function for pins 4–7 using a different logic
-void pollChannels() {
-  static unsigned long lastRising[4] = {0};
-  static bool lastState[4] = {LOW};
-  int pins[4] = {CH3_PIN, CH4_PIN, CH5_PIN, CH6_PIN};
-  int idxs[4] = {4, 5, 6, 7}; // ch[2] for CH3_PIN, etc.
-
-  for (int i = 0; i < 4; i++) {
-    int pin = pins[i];
-    int idx = idxs[i];
-    int currentState = digitalRead(pin);
-
-    if (currentState == HIGH && lastState[i] == LOW) {
-      lastRising[i] = micros();
-    } else if (currentState == LOW && lastState[i] == HIGH) {
-      ch[idx].pulseWidth = micros() - lastRising[i];
-    }
-    lastState[i] = currentState;
-  }
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(CH3_PIN), ch3_ISR, CHANGE);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(CH4_PIN), ch4_ISR, CHANGE);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(CH5_PIN), ch5_ISR, CHANGE);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(CH6_PIN), ch6_ISR, CHANGE);
 }
 
 void setup() {
@@ -94,17 +96,13 @@ void setup() {
 }
 
 void loop() {
-  // Poll pins 4–7
-  pollChannels();
-
   // Read and print all channel values
   int throttle = readChannel(0, 0, 1000);
   int roll = readChannel(1, 0, 1000);
   int pitch = readChannel(2, 0, 1000);
   int yaw = readChannel(3, 0, 1000);
-  int button = readSwitch(4);
+  int button = readChannel(4, 0, 1000);
   int aux = readChannel(5, 0, 1000);
-  //int aux = digitalRead(4);
 
   Serial.print("Throttle: ");
   Serial.print(throttle);
@@ -119,5 +117,6 @@ void loop() {
   Serial.print(" | Aux: ");
   Serial.println(aux);
 
-  delay(100); // Adjust delay as needed for update rate
+
+  //delay(100); // Adjust delay as needed for update rate
 }

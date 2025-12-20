@@ -1,5 +1,5 @@
 #include <Wire.h>
-
+#include <PinChangeInterrupt.h>
 #include <ServoTimer2.h>
 #ifdef RH_HAVE_HARDWARE_SPI
 #include <SPI.h>  // Needed to compile RH_ASK
@@ -8,7 +8,7 @@
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950       // Set to 2000 for full range
-#define TEST_MODE false         // Set to false for actual flight
+#define TEST_MODE true         // Set to false for actual flight
 #define CALIBRATION_MODE false  // Set to false after calibration is done
 
 const int OFFSET[4] = { 0, 0, 0, 0 };  //{ -122, -50, -258, 73 }
@@ -89,9 +89,9 @@ int slider = 0, x = 0, y = 0;
 bool button = 1;
 
 // ===================== FlySky CT6B RECEIVER (PWM channels) =====================
-#define CH1_PIN 4  // Throttle
+#define CH1_PIN 2  // Throttle
 #define CH2_PIN 3  // Roll (x)
-#define CH3_PIN 2  // Pitch (y)
+#define CH3_PIN 4  // Pitch (y)
 #define CH4_PIN 5  // Yaw (unused here)
 #define CH5_PIN 6  // Arm / mode switch (button)
 #define CH6_PIN 7  // Aux (optional)
@@ -101,6 +101,7 @@ bool button = 1;
 #define PWM_MID 1500
 #define PWM_DEADZONE 50
 
+// Structure to store channel data
 struct ChannelData {
   volatile unsigned long risingEdge;
   volatile int pulseWidth;
@@ -108,7 +109,7 @@ struct ChannelData {
 
 ChannelData ch[6];
 
-// ISRs for each channel (RISING/FALLING edge measurement)
+// Interrupt Service Routines for pins 2 and 3
 void ch1_ISR() {
   if (digitalRead(CH1_PIN)) ch[0].risingEdge = micros();
   else ch[0].pulseWidth = micros() - ch[0].risingEdge;
@@ -117,6 +118,8 @@ void ch2_ISR() {
   if (digitalRead(CH2_PIN)) ch[1].risingEdge = micros();
   else ch[1].pulseWidth = micros() - ch[1].risingEdge;
 }
+
+// Pin change interrupt for pins 4–7
 void ch3_ISR() {
   if (digitalRead(CH3_PIN)) ch[2].risingEdge = micros();
   else ch[2].pulseWidth = micros() - ch[2].risingEdge;
@@ -134,24 +137,28 @@ void ch6_ISR() {
   else ch[5].pulseWidth = micros() - ch[5].risingEdge;
 }
 
+// Function to map PWM value to output range
 int mapPWM(int v, int outMin, int outMax) {
   v = constrain(v, PWM_MIN, PWM_MAX);
   if (abs(v - PWM_MID) < PWM_DEADZONE) v = PWM_MID;
   return map(v, PWM_MIN, PWM_MAX, outMin, outMax);
 }
 
+// Function to read a channel and map it
 int readChannel(int idx, int outMin, int outMax) {
   int pw = ch[idx].pulseWidth;
   if (pw < PWM_MIN || pw > PWM_MAX) return outMin;
   return mapPWM(pw, outMin, outMax);
 }
 
+// Function to read a switch channel
 bool readSwitch(int idx) {
   int pw = ch[idx].pulseWidth;
   if (pw < PWM_MIN || pw > PWM_MAX) return false;
   return (pw > PWM_MID);
 }
 
+// Initialize receiver pins and interrupts
 void flyskyInit() {
   pinMode(CH1_PIN, INPUT);
   pinMode(CH2_PIN, INPUT);
@@ -162,8 +169,10 @@ void flyskyInit() {
 
   attachInterrupt(digitalPinToInterrupt(CH1_PIN), ch1_ISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(CH2_PIN), ch2_ISR, CHANGE);
-  // CH3–CH6 on Uno use pin-change interrupts; simplest is to poll in loop
-  // or move to interrupt-capable pins on boards like Mega.
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(CH3_PIN), ch3_ISR, CHANGE);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(CH4_PIN), ch4_ISR, CHANGE);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(CH5_PIN), ch5_ISR, CHANGE);
+  attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(CH6_PIN), ch6_ISR, CHANGE);
 }
 
 
@@ -354,7 +363,7 @@ void loop() {
     } else {
       PID_X();
       PID_Y();
-      PID_Z();
+      //PID_Z();
       if (throttle <= 1050 && !landingInProgress) {
         PID_x = PID_y = PID_z = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
@@ -364,6 +373,16 @@ void loop() {
 
     //printLoopHz();
     debug_output();
+    /*Serial.print(millis());
+    Serial.print(",");
+    Serial.print(PID_x);
+    Serial.print(",");
+    Serial.print(PID_y);
+    Serial.print(",");
+    Serial.print(roll);
+    Serial.print(",");
+    Serial.println(pitch);*/
+
   }
   //delayMicroseconds(100);
 }
@@ -495,7 +514,7 @@ void calculate_IMU_error() {
 
 // ------------------ PID ------------------
 void PID_X() {
-  float error = roll - x;
+  float error = roll - prev_roll;
   if (abs(error) < 1) error = 0;  //pid_i_x += ki_x * error;
   pid_i_x = constrain(pid_i_x, -50, 50);
   pid_d_x = kd_x * (error - previous_error_x) / elapsedTime;
@@ -510,7 +529,7 @@ void PID_X() {
 }
 
 void PID_Y() {
-  float error = pitch - y;
+  float error = pitch - prev_pitch;
   if (abs(error) < 1) error = 0;  // pid_i_y += ki_y * error;
   pid_i_y = constrain(pid_i_y, -50, 50);
   pid_d_y = kd_y * (error - previous_error_y) / elapsedTime;
@@ -567,17 +586,17 @@ void motorchangetest(bool fast = false) {
 // ------------------ RECV ------------------
 void recv() {
   // Throttle: CH1 → slider (0–1000)
-  int thr = readChannel(0, 0, 1000);
-  slider = thr;
+
+  slider = readChannel(0, 0, 1000);
 
   // Roll: CH2 → x
-  x = readChannel(1, -20, 20);
+  /*x = readChannel(1, 0, 1000);
 
   // Pitch: CH3 → y
-  y = readChannel(2, -20, 20);
+  y = readChannel(2, 0, 1000);
 
   // Switch: CH5 → button (1/0)
-  button = readSwitch(4) ? 1 : 0;
+  button = readChannel(4, 0, 1000);*/
 
   lastSignalTime = millis();
 }
