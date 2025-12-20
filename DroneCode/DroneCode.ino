@@ -52,8 +52,8 @@ float PID_x = 0, PID_y = 0;
 float pid_p_x = 0, pid_i_x = 0, pid_d_x = 0;
 float pid_p_y = 0, pid_i_y = 0, pid_d_y = 0;
 float previous_error_x = 0, previous_error_y = 0;
-const float kp_x = 5, ki_x = 0.005, kd_x = 1.2;
-const float kp_y = 5, ki_y = 0.005, kd_y = 1.2;
+const float kp_x = 5, ki_x = 0.8, kd_x = 1.2;
+const float kp_y = 5, ki_y = 0.8, kd_y = 1.2;
 const float d_angle_x = 0, d_angle_y = 0;
 
 float PID_z = 0;
@@ -381,7 +381,10 @@ void loop() {
 
     //printLoopHz();
     //debug_output();
+
+    Serial.print(" | ");
     Serial.print(millis());
+    Serial.print(" | ");
     Serial.print(m[0].Power);
     Serial.print("/");
     Serial.print(m[1].Power);
@@ -389,10 +392,11 @@ void loop() {
     Serial.print(m[2].Power);
     Serial.print("/");
     Serial.print(m[3].Power);
-    Serial.print(",");
+    Serial.print(" | ");
     Serial.print(PID_x);
     Serial.print(",");
     Serial.print(PID_y);
+    Serial.print(" | ");
     Serial.print(",");
     Serial.print(roll);
     Serial.print(",");
@@ -433,6 +437,9 @@ void printLoopHz() {
   }
 }
 
+
+float gyrRateX = 0, gyrRateY = 0, gyrRateZ = 0;
+
 // ------------------ IMU ------------------
 void IMU() {
   previousTime = currentTime;
@@ -459,6 +466,11 @@ void IMU() {
   float gx = (Wire.read() << 8 | Wire.read()) / 32.8 - gyrError[0];
   float gy = (Wire.read() << 8 | Wire.read()) / 32.8 - gyrError[1];
   float gz = (Wire.read() << 8 | Wire.read()) / 32.8 - gyrError[2];
+
+  gyrRateX = gx;
+  gyrRateY = gy;
+  gyrRateZ = gz;
+
 
   // --- Kalman Filter for X axis ---
   kalman_predict(&kalmanAngleX, &biasX, &P00_X, &P01_X, &P10_X, &P11_X, gx, elapsedTime);
@@ -546,10 +558,14 @@ void calculate_IMU_error() {
 
 // ------------------ PID ------------------
 void PID_X() {
-  float error = x - roll;
+  float error = roll - x;
+  Serial.print(error);
+  Serial.print(",");
   if (abs(error) < 1) error = 0;  //pid_i_x += ki_x * error;
+  pid_i_x = ki_x * error * elapsedTime;
+  pid_d_x = /*-kd_x * gyrRateX;*/ -kd_x * (error - previous_error_x) / elapsedTime;
+
   pid_i_x = constrain(pid_i_x, -50, 50);
-  pid_d_x = -kd_x * (error - previous_error_x) / elapsedTime;
 
   PID_x = kp_x * error + pid_i_x + pid_d_x;
   PID_x = constrain(PID_x, -400, 400);
@@ -561,10 +577,15 @@ void PID_X() {
 }
 
 void PID_Y() {
-  float error = y - pitch;
+  float error = pitch - y;
+  Serial.print(error);
+  Serial.print(",");
   if (abs(error) < 1) error = 0;  // pid_i_y += ki_y * error;
+  pid_i_y = ki_y * error * elapsedTime;
+  pid_d_y = /*-kd_y * gyrRateY;*/ kd_y * (error - previous_error_y) / elapsedTime;
+
   pid_i_y = constrain(pid_i_y, -50, 50);
-  pid_d_y = kd_y * (error - previous_error_y) / elapsedTime;
+
   PID_y = kp_y * error + pid_i_y + pid_d_y;
   PID_y = constrain(PID_y, -400, 400);
   m[1].Final = throttle + PID_y;
