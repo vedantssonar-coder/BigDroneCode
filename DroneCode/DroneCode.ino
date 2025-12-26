@@ -606,8 +606,8 @@ void PID_X() {
 void PID_Y() {
   float error_out = pitch - y;
 
-  //Serial.print(error_out);
-  //Serial.print(",");
+  Serial.print(error_out);
+  Serial.print(",");
   if (abs(error_out) < 0.1) error_out = 0;  // pid_i_y += ki_y * error;
                                             /*pid_i_y = ki_y * error * elapsedTime;
   pid_d_y = /*-kd_y * gyrRateY;*/
@@ -628,7 +628,7 @@ void PID_Y() {
 
   // Inner loop(rate)
   float eRatePitch = p_cmd - gyrRateY;
-  //Serial.print(eRatePitch);
+  Serial.print(eRatePitch);
 
 
 
