@@ -376,7 +376,7 @@ void loop() {
         PID_x = PID_y = PID_z = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
       }
-      motorchangetest(true);
+      motorchangetest(false);
     }
 
     //printLoopHz();
@@ -557,48 +557,99 @@ void calculate_IMU_error() {
 }
 
 // ------------------ PID ------------------
+
+const float KPIDD = 0.6, KPIDP = 2.8;
+const float OPIDP = 1;
+
 void PID_X() {
-  float error = roll - x;
-  Serial.print(error);
+
+
+  float error_out = roll - x;
+  Serial.print(error_out);
   Serial.print(",");
-  if (abs(error) < 1) error = 0;  //pid_i_x += ki_x * error;
-  pid_i_x = ki_x * error * elapsedTime;
-  pid_d_x = /*-kd_x * gyrRateX;*/ -kd_x * (error - previous_error_x) / elapsedTime;
+  if (abs(error_out) < 0.1) error_out = 0;  //pid_i_x += ki_x * error;
+                                            //  pid_i_x = ki_x * error_out * elapsedTime;
+                                            //  pid_d_x = /*-kd_x * gyrRateX;*/ -kd_x * (error - previous_error_x) / elapsedTime;
 
-  pid_i_x = constrain(pid_i_x, -50, 50);
+  // pid_i_x = constrain(pid_i_x, -50, 50);
 
-  PID_x = kp_x * error + pid_i_x + pid_d_x;
-  PID_x = constrain(PID_x, -400, 400);
+  // PID_x = kp_x * error + pid_i_x + pid_d_x;
+  // PID_x = constrain(PID_x, -400, 400);
+
+  static float iRollAngle = 0, iRollRate = 0;
+  iRollAngle += error_out * elapsedTime;  // small Ki here
+  iRollAngle = constrain(iRollAngle, -500, 500);
+
+  float p_cmd = OPIDP * error_out + 0 * iRollAngle;
+  p_cmd = constrain(p_cmd, -50, 50);  // deg/s
+
+  // Inner loop(rate)
+  float eRateRoll = p_cmd - gyrRateX;
+  Serial.print(eRateRoll);
+  Serial.print(" | ");
+
+
+  iRollRate += eRateRoll * elapsedTime;
+  iRollRate = constrain(iRollRate, -500, 500);
+
+  float dRateRoll = (eRateRoll - previous_error_x) / elapsedTime;
+  previous_error_x = eRateRoll;
+
+  PID_x = KPIDP * eRateRoll + 0 * iRollRate + KPIDD * dRateRoll;
+
   m[0].Final = throttle + PID_x;
   m[2].Final = throttle - PID_x;
   m[0].Final = constrain(m[0].Final, 1000, 2000);
   m[2].Final = constrain(m[2].Final, 1000, 2000);
-  previous_error_x = error;
 }
 
 void PID_Y() {
-  float error = pitch - y;
-  Serial.print(error);
-  Serial.print(",");
-  if (abs(error) < 1) error = 0;  // pid_i_y += ki_y * error;
-  pid_i_y = ki_y * error * elapsedTime;
-  pid_d_y = /*-kd_y * gyrRateY;*/ kd_y * (error - previous_error_y) / elapsedTime;
+  float error_out = pitch - y;
 
-  pid_i_y = constrain(pid_i_y, -50, 50);
+  //Serial.print(error_out);
+  //Serial.print(",");
+  if (abs(error_out) < 0.1) error_out = 0;  // pid_i_y += ki_y * error;
+                                            /*pid_i_y = ki_y * error * elapsedTime;
+  pid_d_y = /*-kd_y * gyrRateY;*/
+  //  kd_y*(error - previous_error_y) / elapsedTime;
+
+  /*pid_i_y = constrain(pid_i_y, -50, 50);
 
   PID_y = kp_y * error + pid_i_y + pid_d_y;
-  PID_y = constrain(PID_y, -400, 400);
+  PID_y = constrain(PID_y, -400, 400);*/
+
+
+  static float iPitchAngle = 0, iPitchRate = 0;
+  iPitchAngle += error_out * elapsedTime;  // small Ki here
+  iPitchAngle = constrain(iPitchAngle, -500, 500);
+
+  float p_cmd = OPIDP * error_out + 0 * iPitchAngle;
+  p_cmd = constrain(p_cmd, -50, 50);  // deg/s
+
+  // Inner loop(rate)
+  float eRatePitch = p_cmd - gyrRateY;
+  //Serial.print(eRatePitch);
+
+
+
+  iPitchRate += eRatePitch * elapsedTime;
+  iPitchRate = constrain(iPitchRate, -500, 500);
+
+  float dRatePitch = (eRatePitch - previous_error_y) / elapsedTime;
+  previous_error_y = eRatePitch;
+
+  PID_y = KPIDP * eRatePitch + 0 * iPitchRate + KPIDD * dRatePitch;
+
   m[1].Final = throttle + PID_y;
   m[3].Final = throttle - PID_y;
   m[1].Final = constrain(m[1].Final, 1000, 2000);
   m[3].Final = constrain(m[3].Final, 1000, 2000);
-  previous_error_y = error;
 }
 
 // ------------------ PID Z (Yaw) ------------------
 
 
-void PID_Z() {
+/*void PID_Z() {
   float error = yaw - d_angle_z;
 
   // Normalize yaw to -180 to 180
@@ -621,7 +672,7 @@ void PID_Z() {
   }
 
   previous_error_z = error;
-}
+}*/
 
 // ------------------ MOTOR UPDATE ------------------
 void motorchangetest(bool fast = false) {
@@ -699,7 +750,7 @@ void land() {
   IMU();
   PID_X();
   PID_Y();
-  PID_Z();
+  //PID_Z();
 
   // Clamp PID output when throttle is very low
   /*if (throttle < 1050) {
