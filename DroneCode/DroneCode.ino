@@ -379,9 +379,9 @@ void loop() {
       motorchangetest(false);
     }
 
-    //printLoopHz();
+    printLoopHz();
     //debug_output();
-
+    /*
     Serial.print(" | ");
     Serial.print(millis());
     Serial.print(" | ");
@@ -400,7 +400,7 @@ void loop() {
     Serial.print(",");
     Serial.print(roll);
     Serial.print(",");
-    Serial.println(pitch);
+    Serial.println(pitch);*/
   }
   //delayMicroseconds(100);
 }
@@ -565,8 +565,8 @@ void PID_X() {
 
 
   float error_out = roll - x;
-  Serial.print(error_out);
-  Serial.print(",");
+  //Serial.print(error_out);
+  //Serial.print(",");
   if (abs(error_out) < 0.1) error_out = 0;  //pid_i_x += ki_x * error;
                                             //  pid_i_x = ki_x * error_out * elapsedTime;
                                             //  pid_d_x = /*-kd_x * gyrRateX;*/ -kd_x * (error - previous_error_x) / elapsedTime;
@@ -585,8 +585,8 @@ void PID_X() {
 
   // Inner loop(rate)
   float eRateRoll = p_cmd - gyrRateX;
-  Serial.print(eRateRoll);
-  Serial.print(" | ");
+  //Serial.print(eRateRoll);
+  //Serial.print(" | ");
 
 
   iRollRate += eRateRoll * elapsedTime;
@@ -606,8 +606,8 @@ void PID_X() {
 void PID_Y() {
   float error_out = pitch - y;
 
-  Serial.print(error_out);
-  Serial.print(",");
+  //Serial.print(error_out);
+  //Serial.print(",");
   if (abs(error_out) < 0.1) error_out = 0;  // pid_i_y += ki_y * error;
                                             /*pid_i_y = ki_y * error * elapsedTime;
   pid_d_y = /*-kd_y * gyrRateY;*/
@@ -628,7 +628,7 @@ void PID_Y() {
 
   // Inner loop(rate)
   float eRatePitch = p_cmd - gyrRateY;
-  Serial.print(eRatePitch);
+  //Serial.print(eRatePitch);
 
 
 
