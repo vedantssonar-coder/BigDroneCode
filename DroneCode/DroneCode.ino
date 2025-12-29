@@ -15,6 +15,11 @@ const int OFFSET[4] = { 0, 0, 0, 0 };  //{ -122, -50, -258, 73 }
 #define MIN_POWER 1000
 #define MAX_POWER 2000
 
+#define LOOP_FREQUENCY 100  // Hz
+#define LOOP_PERIOD_US (1000000 / LOOP_FREQUENCY)  // 2500us for 400Hz
+
+
+
 const int led = 12;   //+ve
 const int led1 = 13;  //-ve
 
@@ -176,6 +181,13 @@ void flyskyInit() {
 }
 
 
+//const float KPIDD = 0.178, KPIDP = 1.59; //at 550
+//const float KPIDD = 0.01, KPIDP = 2.05;  // at 600+
+ //float KPIDD = 0.05, KPIDP = 1.2;  // at 600+
+ float KPIDD = 0, KPIDP = 1;  // at 600+
+const float OPIDP = 1;
+
+
 // ------------------ ESC CALIBRATION ------------------
 void esc_calibration() {
   Serial.println("=== ESC THROTTLE RANGE CALIBRATION ===");
@@ -300,7 +312,24 @@ float receivedNumber = 0.0;
 // ------------------ LOOP ------------------
 void loop() {
 
+  static unsigned long loop_timer = micros();
+  unsigned long now = micros();
+  
+  // Wait until exactly LOOP_PERIOD_US has elapsed
+  while (now - loop_timer < LOOP_PERIOD_US) {
+    now = micros();
+  }
+
+  // Update loop timer for next iteration
+  loop_timer = now;
+  
   LedBlinker();
+
+
+
+
+
+
   if (!TEST_MODE && !landingInProgress) {
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
   }
@@ -310,7 +339,7 @@ void loop() {
     //slider = constrain(map(elapsed, 0, 500, 0, 200), 0, 50);
     //slider=200;
     SerialReader();
-    slider = (int)receivedNumber;
+    
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
     armed = true;
     lastSignalTime = millis();
@@ -376,6 +405,7 @@ void loop() {
         PID_x = PID_y = PID_z = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
       }
+
       motorchangetest(false);
     }
 
@@ -408,20 +438,53 @@ void loop() {
 void SerialReader() {
   while (Serial.available() > 0 && bufferIndex < BUFFER_SIZE - 1) {
     char c = Serial.read();
+
     if (c == '\n' || c == '\r') {
-      buffer[bufferIndex] = '\0';     // Null-terminate
-      receivedNumber = atof(buffer);  // Parse to float (handles int too)
-      Serial.print("Received number: ");
-      Serial.println(receivedNumber, 2);  // Print with 2 decimals
+      // Terminate the string
+      buffer[bufferIndex] = '\0';
 
+      // Example expected format: "120,1.5,0.08"
+      //          throttleOffset,KPIDP,KPIDD
+      char *p = buffer;
 
+      // 1) throttle offset (slider)
+      char *token = strtok(p, ",");
+      if (token != NULL) {
+        float tempThrottleOffset = atof(token);
+        slider = (int)tempThrottleOffset;              // your code uses slider as int
+      }
 
-      bufferIndex = 0;  // Reset
+      // 2) KPIDP
+      token = strtok(NULL, ",");
+      if (token != NULL) {
+        KPIDD = KPIDD; // just to avoid unused warning if not used here
+        float tempKPIDP = atof(token);
+        KPIDP = tempKPIDP;
+      }
+
+      // 3) KPIDD
+      token = strtok(NULL, ",");
+      if (token != NULL) {
+        float tempKPIDD = atof(token);
+        KPIDD = tempKPIDD;
+      }
+
+      // Update throttle from slider just like you already do
+      throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
+
+      // Optional: echo back for debugging
+      Serial.print("Slider: ");   Serial.print(slider);
+      Serial.print("  KPIDP: ");  Serial.print(KPIDP, 4);
+      Serial.print("  KPIDD: ");  Serial.println(KPIDD, 4);
+
+      // Reset buffer
+      bufferIndex = 0;
     } else {
       buffer[bufferIndex++] = c;
     }
   }
 }
+
 
 
 void printLoopHz() {
@@ -558,8 +621,7 @@ void calculate_IMU_error() {
 
 // ------------------ PID ------------------
 
-const float KPIDD = 0.6, KPIDP = 2.8;
-const float OPIDP = 1;
+
 
 void PID_X() {
 
