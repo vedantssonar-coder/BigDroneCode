@@ -62,10 +62,10 @@ const float kp_y = 5, ki_y = 0.8, kd_y = 1.2;
 const float d_angle_x = 0, d_angle_y = 0;
 
 float PID_z = 0;
-float pid_p_z = 0, pid_i_z = 0, pid_d_z = 0;
+/*float pid_p_z = 0, pid_i_z = 0, pid_d_z = 0;
 float previous_error_z = 0;
 const float kp_z = 2.0, ki_z = 0.005, kd_z = 1.0;
-const float d_angle_z = 0;  // Desired yaw angle (usually 0 for stability)
+const float d_angle_z = 0;  // Desired yaw angle (usually 0 for stability)*/
 
 ServoTimer2 esc[4];
 
@@ -184,7 +184,7 @@ void flyskyInit() {
 //const float KPIDD = 0.178, KPIDP = 1.59; //at 550
 //const float KPIDD = 0.01, KPIDP = 2.05;  // at 600+
  //float KPIDD = 0.05, KPIDP = 1.2;  // at 600+
- float KPIDD = 0, KPIDP = 1;  // at 600+
+ float KPIDD = 0.012, KPIDP = 1.4;  // at 600+
 const float OPIDP = 1;
 
 
@@ -322,7 +322,7 @@ void loop() {
 
   // Update loop timer for next iteration
   loop_timer = now;
-  
+
   LedBlinker();
 
 
@@ -410,7 +410,7 @@ void loop() {
     }
 
     printLoopHz();
-    //debug_output();
+    debug_output();
     /*
     Serial.print(" | ");
     Serial.print(millis());
