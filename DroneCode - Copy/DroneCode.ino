@@ -11,11 +11,11 @@
 #define TEST_MODE true          // Set to false for actual flight
 #define CALIBRATION_MODE false  // Set to false after calibration is done
 
-
+const int OFFSET[4] = { 0, 0, 0, 0 };  //{ -122, -50, -258, 73 }
 #define MIN_POWER 1000
 #define MAX_POWER 2000
 
-#define LOOP_FREQUENCY 100                         // Hz
+#define LOOP_FREQUENCY 100  // Hz
 #define LOOP_PERIOD_US (1000000 / LOOP_FREQUENCY)  // 2500us for 400Hz
 
 
@@ -42,7 +42,6 @@ float accRaw[3], accAngle[3], accError[3];
 float gyrRaw[3], gyrAngle[3], gyrError[3];
 float roll = 0, pitch = 0, yaw = 0;
 float prev_roll = 0, prev_pitch = 0, prev_yaw = 0;
-float gyrRateX = 0, gyrRateY = 0, gyrRateZ = 0;  // Gyro rates (deg/s)
 
 // Kalman filter variables
 float kalmanAngleX = 0, kalmanAngleY = 0;
@@ -54,40 +53,19 @@ const float Q_bias = 0.001;
 const float R_measure = 0.05;
 
 // PID
-float PID_x = 0, PID_y = 0, PID_z = 0;
+float PID_x = 0, PID_y = 0;
+float pid_p_x = 0, pid_i_x = 0, pid_d_x = 0;
+float pid_p_y = 0, pid_i_y = 0, pid_d_y = 0;
+float previous_error_x = 0, previous_error_y = 0;
+const float kp_x = 5, ki_x = 0.8, kd_x = 1.2;
+const float kp_y = 5, ki_y = 0.8, kd_y = 1.2;
+const float d_angle_x = 0, d_angle_y = 0;
 
-// ===== Outer loop (angle -> rate) =====
-const float OPIDP_ROLL = 3.0;   //TUNING CONSTANT
-const float OPIDP_PITCH = 3.0;  //TUNING CONSTANT
-const float OPIDP_YAW = 2.0;
-const float ANGLE_DB_DEG = 0.2;
-const float RATECMD_LIM_DPS = 60.0;
-
-// ===== Inner loop (rate PID) =====
-float KPIDP = 0.5;    //TUNING CONSTANT
-float KPIDI = 0.01;   //TUNING CONSTANT
-float KPIDD = 0.002;  //TUNING CONSTANT
-
-const float PID_LIM = 350;  // us
-const float IRATE_LIM = 80;
-
-float iRateRoll = 0;
-float iRatePitch = 0;
-float iRateYaw = 0;
-
-
-
-//const float KPIDD = 0.178, KPIDP = 1.59; //at 550
-//const float KPIDD = 0.01, KPIDP = 2.05;  // at 600+
-//float KPIDD = 0.012, KPIDP = 1.4;  // at 600+
-//float KPIDD = 0.002, KPIDP = 0.5;  // at 600+
-//const float OPIDP = 3;
-
-//Serial Reader
-const int BUFFER_SIZE = 20;
-char buffer[BUFFER_SIZE];
-int bufferIndex = 0;
-
+float PID_z = 0;
+/*float pid_p_z = 0, pid_i_z = 0, pid_d_z = 0;
+float previous_error_z = 0;
+const float kp_z = 2.0, ki_z = 0.005, kd_z = 1.0;
+const float d_angle_z = 0;  // Desired yaw angle (usually 0 for stability)*/
 
 ServoTimer2 esc[4];
 
@@ -99,7 +77,7 @@ public:
   Motor(int i)
     : index(i) {}
   void update() {
-    int us = constrain((int)(Power), 1000, 2000);
+    int us = constrain((int)(Power + OFFSET[index]), 1000, 2000);
     esc[index].write(us);  // non-blocking servo pulse
   }
 };
@@ -203,7 +181,11 @@ void flyskyInit() {
 }
 
 
-
+//const float KPIDD = 0.178, KPIDP = 1.59; //at 550
+//const float KPIDD = 0.01, KPIDP = 2.05;  // at 600+
+ //float KPIDD = 0.012, KPIDP = 1.4;  // at 600+
+ float KPIDD = 0.002, KPIDP = 0.5;  // at 600+
+const float OPIDP = 3;
 
 
 // ------------------ ESC CALIBRATION ------------------
@@ -322,14 +304,17 @@ void setup() {
   delay(5000);
 }
 
-
+const int BUFFER_SIZE = 20;
+char buffer[BUFFER_SIZE];
+int bufferIndex = 0;
+float receivedNumber = 0.0;
 
 // ------------------ LOOP ------------------
 void loop() {
 
   static unsigned long loop_timer = micros();
   unsigned long now = micros();
-
+  
   // Wait until exactly LOOP_PERIOD_US has elapsed
   while (now - loop_timer < LOOP_PERIOD_US) {
     now = micros();
@@ -340,9 +325,9 @@ void loop() {
 
   LedBlinker();
 
-  previousTime = currentTime;
-  currentTime = millis();
-  elapsedTime = (currentTime - previousTime) / 1000.0f;
+
+
+
 
 
   if (!TEST_MODE && !landingInProgress) {
@@ -354,7 +339,7 @@ void loop() {
     //slider = constrain(map(elapsed, 0, 500, 0, 200), 0, 50);
     //slider=200;
     SerialReader();
-
+    
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
     armed = true;
     lastSignalTime = millis();
@@ -374,11 +359,9 @@ void loop() {
           kalmanAngleX = 0;
           kalmanAngleY = 0;
           biasX = biasY = 0;
-
-          iRateRoll = 0;
-          iRatePitch = 0;
-          iRateYaw = 0;
-
+          pid_i_x = pid_i_y = 0;
+          previous_error_x = 0;
+          previous_error_y = 0;
         } else {
           Serial.println("Throttle too high! Set throttle below 1050 to arm.");
           digitalWrite(led, HIGH);
@@ -415,15 +398,11 @@ void loop() {
       land();
 
     } else {
-      PID_cascaded_X();
-      PID_cascaded_Y();
-      PID_cascaded_Z();
-      mixPlus(throttle, PID_x, PID_y, PID_z);
+      PID_X();
+      PID_Y();
+      //PID_Z();
       if (throttle <= 1050 && !landingInProgress) {
         PID_x = PID_y = PID_z = 0;
-        iRateRoll = 0;
-        iRatePitch = 0;
-        iRateYaw = 0;
         for (int i = 0; i < 4; i++) m[i].Final = throttle;
       }
 
@@ -470,19 +449,19 @@ void SerialReader() {
 
       // Example expected format: "120,1.5,0.08"
       //          throttleOffset,KPIDP,KPIDD
-      char* p = buffer;
+      char *p = buffer;
 
       // 1) throttle offset (slider)
-      char* token = strtok(p, ",");
+      char *token = strtok(p, ",");
       if (token != NULL) {
         float tempThrottleOffset = atof(token);
-        slider = (int)tempThrottleOffset;  // your code uses slider as int
+        slider = (int)tempThrottleOffset;              // your code uses slider as int
       }
 
       // 2) KPIDP
       token = strtok(NULL, ",");
       if (token != NULL) {
-        KPIDD = KPIDD;  // just to avoid unused warning if not used here
+        KPIDD = KPIDD; // just to avoid unused warning if not used here
         float tempKPIDP = atof(token);
         KPIDP = tempKPIDP;
       }
@@ -498,12 +477,9 @@ void SerialReader() {
       throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
 
       // Optional: echo back for debugging
-      Serial.print("Slider: ");
-      Serial.print(slider);
-      Serial.print("  KPIDP: ");
-      Serial.print(KPIDP, 4);
-      Serial.print("  KPIDD: ");
-      Serial.println(KPIDD, 4);
+      Serial.print("Slider: ");   Serial.print(slider);
+      Serial.print("  KPIDP: ");  Serial.print(KPIDP, 4);
+      Serial.print("  KPIDD: ");  Serial.println(KPIDD, 4);
 
       // Reset buffer
       bufferIndex = 0;
@@ -529,10 +505,13 @@ void printLoopHz() {
 }
 
 
-
+float gyrRateX = 0, gyrRateY = 0, gyrRateZ = 0;
 
 // ------------------ IMU ------------------
 void IMU() {
+  previousTime = currentTime;
+  currentTime = millis();
+  elapsedTime = (currentTime - previousTime) / 1000.0f;
 
   // Get raw data
   Wire.beginTransmission(MPU_ADDR);
@@ -644,113 +623,100 @@ void calculate_IMU_error() {
   for (int i = 0; i < 3; i++) gyrError[i] /= 2000.0;
 }
 
-// ---------------------------------------- PID -------------------------------------------
-// ===================== CASCADED CONTROLLER (MATLAB implementation) =====================
+// ------------------ PID ------------------
 
-/**
- * Outer loop: angle command -> rate command
- * Implements: rateCmd = OPIDP * (cmdDeg - measDeg) with deadband and limit
- */
-float outerAngleToRate(float cmdDeg, float measDeg, float OPIDP) {
-  float err = cmdDeg - measDeg;
-  if (abs(err) < ANGLE_DB_DEG) err = 0;
 
-  float rateCmd = OPIDP * err;
-  rateCmd = constrain(rateCmd, -RATECMD_LIM_DPS, RATECMD_LIM_DPS);
-  return rateCmd;
+
+void PID_X() {
+
+
+  float error_out = roll - x;
+ 
+  if (abs(error_out) < 0.1) error_out = 0; 
+
+  //Outer 
+  static float iRollAngle = 0, iRollRate = 0;
+  iRollAngle += error_out * elapsedTime;  // small Ki here
+  iRollAngle = constrain(iRollAngle, -500, 500);
+
+  float p_cmd = OPIDP * error_out + 0 * iRollAngle;
+  p_cmd = constrain(p_cmd, -50, 50);  // deg/s
+
+  // Inner loop(rate)
+  float eRateRoll = p_cmd - gyrRateX;
+  
+
+  iRollRate += eRateRoll * elapsedTime;
+  iRollRate = constrain(iRollRate, -500, 500);
+
+  float dRateRoll = -gyrRateX;
+  previous_error_x = eRateRoll;
+
+  PID_x = KPIDP * eRateRoll + 0.01 * iRollRate + KPIDD * dRateRoll;
+
+  m[0].Final = throttle + PID_x;
+  m[2].Final = throttle - PID_x;
+  m[0].Final = constrain(m[0].Final, 1000, 2000);
+  m[2].Final = constrain(m[2].Final, 1000, 2000);
 }
 
+void PID_Y() {
+  float error_out = pitch - y;
+  if (abs(error_out) < 0.1) error_out = 0;  
 
-/**
- * Inner loop: rate PID with anti-windup (gyro-based D term)
- * Implements:
- *   pTerm = KPIDP * rateErr
- *   dTerm = KPIDD * (-gyroRate)       [gyro-based D]
- *   iTerm = KPIDI * iRate with conditional integration
- * 
- * Anti-windup: only integrate if output is not saturated
- *   AND error is in the correct direction
- */
-float innerRatePID(float rateCmd, float gyroRate, float& iRate, float dt) {
-  float rateErr = rateCmd - gyroRate;
 
-  float pTerm = KPIDP * rateErr;
-  float dTerm = KPIDD * (-gyroRate);  // Gyro-based D (important!)
+  //Outer
+  static float iPitchAngle = 0, iPitchRate = 0;
+  iPitchAngle += error_out * elapsedTime;  // small Ki here
+  iPitchAngle = constrain(iPitchAngle, -500, 500);
 
-  float uNoI = pTerm + dTerm;
-  float uPred = uNoI + KPIDI * iRate;
+  float p_cmd = OPIDP * error_out + 0 * iPitchAngle;
+  p_cmd = constrain(p_cmd, -50, 50);  // deg/s
 
-  // Conditional integration anti-windup
-  bool satHigh = (uPred >= PID_LIM) && (rateErr > 0);
-  bool satLow = (uPred <= -PID_LIM) && (rateErr < 0);
+  // Inner loop(rate)
+  float eRatePitch = p_cmd - gyrRateY;
 
-  if (!(satHigh || satLow)) {
-    iRate += rateErr * dt;
-    iRate = constrain(iRate, -IRATE_LIM, IRATE_LIM);
+  iPitchRate += eRatePitch * elapsedTime;
+  iPitchRate = constrain(iPitchRate, -500, 500);
+
+  float dRatePitch = -gyrRateY;
+  previous_error_y = eRatePitch;
+
+  PID_y = KPIDP * eRatePitch + 0.01 * iPitchRate + KPIDD * dRatePitch;
+
+  m[1].Final = throttle + PID_y;
+  m[3].Final = throttle - PID_y;
+  m[1].Final = constrain(m[1].Final, 1000, 2000);
+  m[3].Final = constrain(m[3].Final, 1000, 2000);
+}
+
+// ------------------ PID Z (Yaw) ------------------
+
+
+/*void PID_Z() {
+  float error = yaw - d_angle_z;
+
+  // Normalize yaw to -180 to 180
+  if (error > 180) error -= 360;
+  if (error < -180) error += 360;
+
+  if (abs(error) < 3) pid_i_z += ki_z * error;
+  pid_d_z = kd_z * (error - previous_error_z) / elapsedTime;
+  PID_z = kp_z * error + pid_i_z + pid_d_z;
+  PID_z = constrain(PID_z, -400, 400);
+
+  // Apply yaw correction to diagonal motor pairs
+  m[0].Final += PID_z;  // +x +y
+  m[1].Final -= PID_z;  // +x -y
+  m[2].Final += PID_z;  // -x -y
+  m[3].Final -= PID_z;  // -x +y
+
+  for (int i = 0; i < 4; i++) {
+    m[i].Final = constrain(m[i].Final, 1000, 2000);
   }
 
-  float u = uNoI + KPIDI * iRate;
-  u = constrain(u, -PID_LIM, PID_LIM);
-  return u;
-}
-
-
-/**
- * PLUS Mixer: converts axis commands to motor outputs
- * Motor order: [Front Right Back Left]
- * 
- * Pitch control: Front/Back
- * Roll control: Left/Right
- * Yaw control: Diagonal pairs
- */
-void mixPlus(float base, float PIDx, float PIDy, float PIDz) {
-  float mF = base + (-PIDy) + (0) + (+PIDz);
-  float mR = base + (0) + (-PIDx) + (-PIDz);
-  float mB = base + (+PIDy) + (0) + (+PIDz);
-  float mL = base + (0) + (+PIDx) + (-PIDz);
-
-  m[0].Final = constrain(mF, 1000.0f, 2000.0f);
-  m[1].Final = constrain(mR, 1000.0f, 2000.0f);
-  m[2].Final = constrain(mB, 1000.0f, 2000.0f);
-  m[3].Final = constrain(mL, 1000.0f, 2000.0f);
-}
-
-
-/**
- * X-axis (Roll) cascaded controller
- */
-void PID_cascaded_X() {
-  // Outer: angle -> rate command
-  float rateCmd = outerAngleToRate(x, roll, OPIDP_ROLL);
-
-  // Inner: rate -> axis control output
-  PID_x = innerRatePID(rateCmd, gyrRateX, iRateRoll, elapsedTime);
-}
-
-
-/**
- * Y-axis (Pitch) cascaded controller
- */
-void PID_cascaded_Y() {
-  // Outer: angle -> rate command
-  float rateCmd = outerAngleToRate(y, pitch, OPIDP_PITCH);
-
-  // Inner: rate -> axis control output
-  PID_y = innerRatePID(rateCmd, gyrRateY, iRatePitch, elapsedTime);
-}
-
-
-/**
- * Z-axis (Yaw) cascaded controller
- */
-void PID_cascaded_Z() {
-  // For now, simple rate control (outer loop can be added if needed)
-  // Set desired yaw rate based on stick or desired angle
-  float yawRateCmd = 0;  // TODO: add outer loop if angle-based yaw control desired
-
-  // Inner: rate -> axis control output
-  PID_z = innerRatePID(yawRateCmd, gyrRateZ, iRateYaw, elapsedTime);
-}
+  previous_error_z = error;
+}*/
 
 // ------------------ MOTOR UPDATE ------------------
 void motorchangetest(bool fast = false) {
@@ -772,17 +738,13 @@ void recv() {
   slider = readChannel(0, 0, 1000);
 
   // Roll: CH2 → x
-  /*
-  x = readChannel(1, 0, 1000);
+  /*x = readChannel(1, 0, 1000);
 
   // Pitch: CH3 → y
   y = readChannel(2, 0, 1000);
 
   // Switch: CH5 → button (1/0)
-  button = readChannel(4, 0, 1000);
-  x = map(readChannel(1, 0, 1000), 0, 1000, -30, 30);  // roll [deg]
-  y = map(readChannel(2, 0, 1000), 0, 1000, -30, 30);  // pitch [deg]
-*/
+  button = readChannel(4, 0, 1000);*/
 
   lastSignalTime = millis();
 }
@@ -830,11 +792,15 @@ void land() {
   x = 0;
   y = 0;
   IMU();
-  PID_cascaded_X();
-  PID_cascaded_Y();
-  PID_cascaded_Z();
+  PID_X();
+  PID_Y();
+  //PID_Z();
 
-
+  // Clamp PID output when throttle is very low
+  /*if (throttle < 1050) {
+    PID_x = PID_y = 0;
+    for (int i = 0; i < 4; i++) m[i].Final = throttle;
+  }*/
   // Stop angle integration (important!)
   roll = pitch = kalmanAngleX = kalmanAngleY = 0;
   biasX = biasY = 0;

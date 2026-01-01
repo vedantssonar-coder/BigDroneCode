@@ -5,6 +5,7 @@
 #include <SPI.h>  // Needed to compile RH_ASK
 #endif
 
+
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950       // Set to 2000 for full range
@@ -12,22 +13,26 @@
 #define CALIBRATION_MODE false  // Set to false after calibration is done
 
 
+const int OFFSET[4] = { 0, 0, 0, 0 };  //{ -122, -50, -258, 73 }
 #define MIN_POWER 1000
 #define MAX_POWER 2000
 
-#define LOOP_FREQUENCY 100                         // Hz
-#define LOOP_PERIOD_US (1000000 / LOOP_FREQUENCY)  // 2500us for 400Hz
 
+#define LOOP_FREQUENCY 100                         // Hz (changed from 100 to match MATLAB dt=0.002)
+#define LOOP_PERIOD_US (1000000 / LOOP_FREQUENCY)  // 2000us for 500Hz
 
 
 const int led = 12;   //+ve
 const int led1 = 13;  //-ve
 
+
 bool armed = true;
+
 
 // Timer globals
 unsigned long currentTime = 0, previousTime = 0;
 float elapsedTime = 0;
+
 
 unsigned long lastSignalTime = 0;
 const unsigned long SIGNAL_TIMEOUT = 1000;  // in milliseconds
@@ -37,12 +42,13 @@ unsigned long landingStartTime = 0;
 unsigned long lastLandingCommandTime = 0;
 const unsigned long LANDING_COMMAND_COOLDOWN = 1000;  // ms
 
+
 // IMU
 float accRaw[3], accAngle[3], accError[3];
 float gyrRaw[3], gyrAngle[3], gyrError[3];
 float roll = 0, pitch = 0, yaw = 0;
 float prev_roll = 0, prev_pitch = 0, prev_yaw = 0;
-float gyrRateX = 0, gyrRateY = 0, gyrRateZ = 0;  // Gyro rates (deg/s)
+
 
 // Kalman filter variables
 float kalmanAngleX = 0, kalmanAngleY = 0;
@@ -53,43 +59,40 @@ const float Q_angle = 0.0001;
 const float Q_bias = 0.001;
 const float R_measure = 0.05;
 
-// PID
-float PID_x = 0, PID_y = 0, PID_z = 0;
 
-// ===== Outer loop (angle -> rate) =====
-const float OPIDP_ROLL = 3.0;   //TUNING CONSTANT
-const float OPIDP_PITCH = 3.0;  //TUNING CONSTANT
+// ===== CASCADED CONTROLLER (from MATLAB) =====
+// Outer loop (angle -> rate command)
+const float OPIDP_ROLL = 3.0;
+const float OPIDP_PITCH = 3.0;
 const float OPIDP_YAW = 2.0;
 const float ANGLE_DB_DEG = 0.2;
 const float RATECMD_LIM_DPS = 60.0;
 
-// ===== Inner loop (rate PID) =====
-float KPIDP = 0.5;    //TUNING CONSTANT
-float KPIDI = 0.01;   //TUNING CONSTANT
-float KPIDD = 0.002;  //TUNING CONSTANT
 
-const float PID_LIM = 350;  // us
-const float IRATE_LIM = 80;
+// Inner loop (rate PID with anti-windup)
+float KPIDP = 0.10;    // P gain for rate control
+float KPIDI = 0.010;   // I gain for rate control
+float KPIDD = 0.006;   // D gain for rate control (gyro-based)
+const float PID_LIM = 350;  // us output limit
+const float IRATE_LIM = 80;  // integral saturation
 
+
+// Rate integral states
 float iRateRoll = 0;
 float iRatePitch = 0;
 float iRateYaw = 0;
 
 
+// Motor outputs from PID
+float PID_x = 0, PID_y = 0, PID_z = 0;
 
-//const float KPIDD = 0.178, KPIDP = 1.59; //at 550
-//const float KPIDD = 0.01, KPIDP = 2.05;  // at 600+
-//float KPIDD = 0.012, KPIDP = 1.4;  // at 600+
-//float KPIDD = 0.002, KPIDP = 0.5;  // at 600+
-//const float OPIDP = 3;
 
-//Serial Reader
-const int BUFFER_SIZE = 20;
-char buffer[BUFFER_SIZE];
-int bufferIndex = 0;
+// Gyro rates (deg/s)
+float gyrRateX = 0, gyrRateY = 0, gyrRateZ = 0;
 
 
 ServoTimer2 esc[4];
+
 
 // Motor Class
 class Motor {
@@ -99,21 +102,20 @@ public:
   Motor(int i)
     : index(i) {}
   void update() {
-    int us = constrain((int)(Power), 1000, 2000);
-    esc[index].write(us);  // non-blocking servo pulse
+    int us = constrain((int)(Power + OFFSET[index]), 1000, 2000);
+    esc[index].write(us);
   }
 };
 
 
 float throttle = 1000;
-// order: +x +y -x -y on pins 3,5,6,9
 Motor m[] = { Motor(0), Motor(1), Motor(2), Motor(3) };
-void motorchangetest(bool fast = false);
+
 
 // Remote
-
 int slider = 0, x = 0, y = 0;
 bool button = 1;
+
 
 // ===================== FlySky CT6B RECEIVER (PWM channels) =====================
 #define CH1_PIN 2  // Throttle
@@ -123,20 +125,23 @@ bool button = 1;
 #define CH5_PIN 6  // Arm / mode switch (button)
 #define CH6_PIN 7  // Aux (optional)
 
+
 #define PWM_MIN 1000
 #define PWM_MAX 2000
 #define PWM_MID 1500
 #define PWM_DEADZONE 50
 
-// Structure to store channel data
+
 struct ChannelData {
   volatile unsigned long risingEdge;
   volatile int pulseWidth;
 };
 
+
 ChannelData ch[6];
 
-// Interrupt Service Routines for pins 2 and 3
+
+// ISRs
 void ch1_ISR() {
   if (digitalRead(CH1_PIN)) ch[0].risingEdge = micros();
   else ch[0].pulseWidth = micros() - ch[0].risingEdge;
@@ -145,8 +150,6 @@ void ch2_ISR() {
   if (digitalRead(CH2_PIN)) ch[1].risingEdge = micros();
   else ch[1].pulseWidth = micros() - ch[1].risingEdge;
 }
-
-// Pin change interrupt for pins 4–7
 void ch3_ISR() {
   if (digitalRead(CH3_PIN)) ch[2].risingEdge = micros();
   else ch[2].pulseWidth = micros() - ch[2].risingEdge;
@@ -164,28 +167,28 @@ void ch6_ISR() {
   else ch[5].pulseWidth = micros() - ch[5].risingEdge;
 }
 
-// Function to map PWM value to output range
+
 int mapPWM(int v, int outMin, int outMax) {
   v = constrain(v, PWM_MIN, PWM_MAX);
   if (abs(v - PWM_MID) < PWM_DEADZONE) v = PWM_MID;
   return map(v, PWM_MIN, PWM_MAX, outMin, outMax);
 }
 
-// Function to read a channel and map it
+
 int readChannel(int idx, int outMin, int outMax) {
   int pw = ch[idx].pulseWidth;
   if (pw < PWM_MIN || pw > PWM_MAX) return outMin;
   return mapPWM(pw, outMin, outMax);
 }
 
-// Function to read a switch channel
+
 bool readSwitch(int idx) {
   int pw = ch[idx].pulseWidth;
   if (pw < PWM_MIN || pw > PWM_MAX) return false;
   return (pw > PWM_MID);
 }
 
-// Initialize receiver pins and interrupts
+
 void flyskyInit() {
   pinMode(CH1_PIN, INPUT);
   pinMode(CH2_PIN, INPUT);
@@ -193,6 +196,7 @@ void flyskyInit() {
   pinMode(CH4_PIN, INPUT);
   pinMode(CH5_PIN, INPUT);
   pinMode(CH6_PIN, INPUT);
+
 
   attachInterrupt(digitalPinToInterrupt(CH1_PIN), ch1_ISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(CH2_PIN), ch2_ISR, CHANGE);
@@ -203,17 +207,12 @@ void flyskyInit() {
 }
 
 
-
-
-
-// ------------------ ESC CALIBRATION ------------------
 void esc_calibration() {
   Serial.println("=== ESC THROTTLE RANGE CALIBRATION ===");
   Serial.println("DISCONNECT BATTERY NOW!");
   Serial.println("Waiting 3 seconds...");
   delay(3000);
 
-  // Step 1: Send MAX throttle to all ESCs
   Serial.println("\nStep 1: Sending MAX throttle (2000 µs)");
   for (int i = 0; i < 4; i++) {
     esc[i].write(2000);
@@ -224,7 +223,6 @@ void esc_calibration() {
   Serial.println("Wait 5 seconds for beeping to complete...");
   delay(5000);
 
-  // Step 2: Send MIN throttle to all ESCs
   Serial.println("\nStep 2: Sending MIN throttle (1000 µs)");
   for (int i = 0; i < 4; i++) {
     esc[i].write(1000);
@@ -235,8 +233,6 @@ void esc_calibration() {
   Serial.println("DISCONNECT BATTERY");
   delay(5000);
 
-
-  // Hold at minimum throttle
   while (true) {
     for (int i = 0; i < 4; i++) {
       m[i].Power = 1000;
@@ -247,7 +243,7 @@ void esc_calibration() {
 }
 
 
-// ------------------ SETUP ------------------
+// ===================== SETUP =====================
 void setup() {
   Serial.begin(9600);
   Wire.begin();
@@ -255,27 +251,28 @@ void setup() {
   pinMode(led, OUTPUT);
   pinMode(led1, OUTPUT);
   Serial.println("Set LED");
-  // IMU Init
+  
   Serial.println("Starting IMU...");
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x6B);  // PWR_MGMT_1
-  Wire.write(0x00);  // Wake up, use internal clock
+  Wire.write(0x6B);
+  Wire.write(0x00);
   Wire.endTransmission();
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1C);  // ACCEL_CONFIG
-  Wire.write(0x10);  // ±8g range
+  Wire.write(0x1C);
+  Wire.write(0x10);
   Wire.endTransmission();
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1B);  // GYRO_CONFIG
-  Wire.write(0x10);  // ±1000°/s range
+  Wire.write(0x1B);
+  Wire.write(0x10);
   Wire.endTransmission();
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1A);  // CONFIG (DLPF)
-  Wire.write(0x05);  // 5 Hz DLPF bandwidth (reduces vibration noise)
+  Wire.write(0x1A);
+  Wire.write(0x05);
   Wire.endTransmission();
+  
   Serial.println("Started IMU  /  Calibrating...");
   digitalWrite(led, HIGH);
   delay(2000);
@@ -285,19 +282,15 @@ void setup() {
   delay(500);
   Serial.println("Starting Motor Calibration...");
 
-  // Attach ESCs
   esc[0].attach(8);
   esc[1].attach(9);
   esc[2].attach(10);
   esc[3].attach(11);
 
-  // Run calibration if enabled
   if (CALIBRATION_MODE) {
     esc_calibration();
-    // After calibration, continue with normal setup
   }
 
-  // Configuring
   for (int i = 0; i < 4; i++) {
     m[i].Power = 2000;
     m[i].update();
@@ -310,7 +303,7 @@ void setup() {
 
   Serial.println("Finished Motor Calibration");
   flyskyInit();
-  Serial.println("Remote COntrol driver intialized");
+  Serial.println("Remote Control driver initialized");
   delay(20);
   Serial.println("Testing remote...");
   for (int i = 0; i < 20; i++) {
@@ -323,49 +316,46 @@ void setup() {
 }
 
 
+const int BUFFER_SIZE = 20;
+char buffer[BUFFER_SIZE];
+int bufferIndex = 0;
 
-// ------------------ LOOP ------------------
+
+// ===================== LOOP =====================
 void loop() {
-
   static unsigned long loop_timer = micros();
   unsigned long now = micros();
 
-  // Wait until exactly LOOP_PERIOD_US has elapsed
   while (now - loop_timer < LOOP_PERIOD_US) {
     now = micros();
   }
 
-  // Update loop timer for next iteration
   loop_timer = now;
 
   LedBlinker();
 
+  // Calculate elapsed time in seconds
   previousTime = currentTime;
   currentTime = millis();
   elapsedTime = (currentTime - previousTime) / 1000.0f;
 
-
   if (!TEST_MODE && !landingInProgress) {
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
   }
+  
   if (TEST_MODE) {
     static unsigned long testStart = millis();
     unsigned long elapsed = millis() - testStart;
-    //slider = constrain(map(elapsed, 0, 500, 0, 200), 0, 50);
-    //slider=200;
     SerialReader();
-
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
     armed = true;
     lastSignalTime = millis();
-
     button = 1;
   } else {
     recv();
     static bool lastButton = 1;
     if (lastButton == 1 && button == 0) {
       if (!armed) {
-        // Only allow arming if throttle is below 1050
         if (throttle <= 1050) {
           armed = true;
           Serial.println("Drone ARMED");
@@ -374,11 +364,9 @@ void loop() {
           kalmanAngleX = 0;
           kalmanAngleY = 0;
           biasX = biasY = 0;
-
           iRateRoll = 0;
           iRatePitch = 0;
           iRateYaw = 0;
-
         } else {
           Serial.println("Throttle too high! Set throttle below 1050 to arm.");
           digitalWrite(led, HIGH);
@@ -400,8 +388,6 @@ void loop() {
   }
 
   if (armed) {
-
-
     IMU();
 
     if (!TEST_MODE && millis() - lastSignalTime > SIGNAL_TIMEOUT && !failsafeLanding) {
@@ -413,12 +399,12 @@ void loop() {
 
     if (landingInProgress) {
       land();
-
     } else {
+      // Cascaded attitude controller
       PID_cascaded_X();
       PID_cascaded_Y();
       PID_cascaded_Z();
-      mixPlus(throttle, PID_x, PID_y, PID_z);
+
       if (throttle <= 1050 && !landingInProgress) {
         PID_x = PID_y = PID_z = 0;
         iRateRoll = 0;
@@ -434,70 +420,43 @@ void loop() {
     Serial.print(PID_x);
     Serial.print(",");
     Serial.print(PID_y);
+    Serial.print(",");
+    Serial.print(PID_z);
     Serial.print(" | ");
     debug_output();
-    /*
-    Serial.print(" | ");
-    Serial.print(millis());
-    Serial.print(" | ");
-    Serial.print(m[0].Power);
-    Serial.print("/");
-    Serial.print(m[1].Power);
-    Serial.print("/");
-    Serial.print(m[2].Power);
-    Serial.print("/");
-    Serial.print(m[3].Power);
-    Serial.print(" | ");
-    Serial.print(PID_x);
-    Serial.print(",");
-    Serial.print(PID_y);
-    Serial.print(" | ");
-    Serial.print(",");
-    Serial.print(roll);
-    Serial.print(",");
-    Serial.println(pitch);*/
   }
-  //delayMicroseconds(100);
 }
+
 
 void SerialReader() {
   while (Serial.available() > 0 && bufferIndex < BUFFER_SIZE - 1) {
     char c = Serial.read();
 
     if (c == '\n' || c == '\r') {
-      // Terminate the string
       buffer[bufferIndex] = '\0';
 
-      // Example expected format: "120,1.5,0.08"
-      //          throttleOffset,KPIDP,KPIDD
       char* p = buffer;
 
-      // 1) throttle offset (slider)
       char* token = strtok(p, ",");
       if (token != NULL) {
         float tempThrottleOffset = atof(token);
-        slider = (int)tempThrottleOffset;  // your code uses slider as int
+        slider = (int)tempThrottleOffset;
       }
 
-      // 2) KPIDP
       token = strtok(NULL, ",");
       if (token != NULL) {
-        KPIDD = KPIDD;  // just to avoid unused warning if not used here
         float tempKPIDP = atof(token);
         KPIDP = tempKPIDP;
       }
 
-      // 3) KPIDD
       token = strtok(NULL, ",");
       if (token != NULL) {
         float tempKPIDD = atof(token);
         KPIDD = tempKPIDD;
       }
 
-      // Update throttle from slider just like you already do
       throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
 
-      // Optional: echo back for debugging
       Serial.print("Slider: ");
       Serial.print(slider);
       Serial.print("  KPIDP: ");
@@ -505,7 +464,6 @@ void SerialReader() {
       Serial.print("  KPIDD: ");
       Serial.println(KPIDD, 4);
 
-      // Reset buffer
       bufferIndex = 0;
     } else {
       buffer[bufferIndex++] = c;
@@ -514,13 +472,12 @@ void SerialReader() {
 }
 
 
-
 void printLoopHz() {
   static unsigned long lastPrint = 0;
   static unsigned long count = 0;
   count++;
   unsigned long now = millis();
-  if (now - lastPrint >= 1000) {  // every 1 s
+  if (now - lastPrint >= 1000) {
     Serial.print("Loop Hz: ");
     Serial.println(count);
     count = 0;
@@ -529,14 +486,10 @@ void printLoopHz() {
 }
 
 
-
-
-// ------------------ IMU ------------------
+// ===================== IMU =====================
 void IMU() {
-
-  // Get raw data
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x3B);  // Start reading from Accel X
+  Wire.write(0x3B);
   Wire.endTransmission(false);
   Wire.requestFrom(MPU_ADDR, 6);
   float ax = (Wire.read() << 8 | Wire.read()) / 4096.0;
@@ -546,9 +499,8 @@ void IMU() {
   float accAngleX = atan2(ay, sqrt(ax * ax + az * az)) * RAD2DEG - accError[0];
   float accAngleY = atan2(-ax, sqrt(ay * ay + az * az)) * RAD2DEG - accError[1];
 
-
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x43);  // Start reading from Gyro X
+  Wire.write(0x43);
   Wire.endTransmission(false);
   Wire.requestFrom(MPU_ADDR, 6);
   float gx = (Wire.read() << 8 | Wire.read()) / 32.8 - gyrError[0];
@@ -559,12 +511,9 @@ void IMU() {
   gyrRateY = gy;
   gyrRateZ = gz;
 
-
-  // --- Kalman Filter for X axis ---
   kalman_predict(&kalmanAngleX, &biasX, &P00_X, &P01_X, &P10_X, &P11_X, gx, elapsedTime);
   kalman_update(&kalmanAngleX, &biasX, &P00_X, &P01_X, &P10_X, &P11_X, accAngleX);
 
-  // --- Kalman Filter for Y axis ---
   kalman_predict(&kalmanAngleY, &biasY, &P00_Y, &P01_Y, &P10_Y, &P11_Y, gy, elapsedTime);
   kalman_update(&kalmanAngleY, &biasY, &P00_Y, &P01_Y, &P10_Y, &P11_Y, accAngleY);
 
@@ -589,12 +538,12 @@ void kalman_predict(float* angle, float* bias,
                     float* P00, float* P01, float* P10, float* P11,
                     float newRate, float dt) {
   *angle += dt * (newRate - *bias);
-
   *P00 += dt * (dt * *P11 - *P01 - *P10 + Q_angle);
   *P01 -= dt * *P11;
   *P10 -= dt * *P11;
   *P11 += Q_bias * dt;
 }
+
 
 void kalman_update(float* angle, float* bias,
                    float* P00, float* P01, float* P10, float* P11,
@@ -616,7 +565,7 @@ void kalman_update(float* angle, float* bias,
   *P11 -= K1 * P01_temp;
 }
 
-// ------------------ CALIBRATION ------------------
+
 void calculate_IMU_error() {
   for (int i = 0; i < 2000; i++) {
     Wire.beginTransmission(MPU_ADDR);
@@ -644,7 +593,7 @@ void calculate_IMU_error() {
   for (int i = 0; i < 3; i++) gyrError[i] /= 2000.0;
 }
 
-// ---------------------------------------- PID -------------------------------------------
+
 // ===================== CASCADED CONTROLLER (MATLAB implementation) =====================
 
 /**
@@ -704,10 +653,10 @@ float innerRatePID(float rateCmd, float gyroRate, float& iRate, float dt) {
  * Yaw control: Diagonal pairs
  */
 void mixPlus(float base, float PIDx, float PIDy, float PIDz) {
-  float mF = base + (-PIDy) + (0) + (+PIDz);
-  float mR = base + (0) + (-PIDx) + (-PIDz);
-  float mB = base + (+PIDy) + (0) + (+PIDz);
-  float mL = base + (0) + (+PIDx) + (-PIDz);
+  float mF = base + (-PIDy) + (0)     + (+PIDz);
+  float mR = base + (0)     + (-PIDx) + (-PIDz);
+  float mB = base + (+PIDy) + (0)     + (+PIDz);
+  float mL = base + (0)     + (+PIDx) + (-PIDz);
 
   m[0].Final = constrain(mF, 1000.0f, 2000.0f);
   m[1].Final = constrain(mR, 1000.0f, 2000.0f);
@@ -752,63 +701,58 @@ void PID_cascaded_Z() {
   PID_z = innerRatePID(yawRateCmd, gyrRateZ, iRateYaw, elapsedTime);
 }
 
-// ------------------ MOTOR UPDATE ------------------
+
+// ===================== MOTOR UPDATE =====================
 void motorchangetest(bool fast = false) {
-  // Smoothing factor: 1.0 = jump directly to Final, 0.2 = smooth
   float factor = fast ? 1.0f : 0.2f;
 
   for (int i = 0; i < 4; i++) {
     float diff = m[i].Final - m[i].Initial;
-    m[i].Power = m[i].Initial + factor * diff;  // move partway
-    m[i].Initial = m[i].Power;                  // next step starts here
-    m[i].update();                              // send to ESC (1000–2000 µs)
+    m[i].Power = m[i].Initial + factor * diff;
+    m[i].Initial = m[i].Power;
+    m[i].update();
   }
 }
 
-// ------------------ RECV ------------------
+
+// ===================== RECEIVER =====================
 void recv() {
   // Throttle: CH1 → slider (0–1000)
-
   slider = readChannel(0, 0, 1000);
 
-  // Roll: CH2 → x
-  /*
-  x = readChannel(1, 0, 1000);
+  // Roll: CH2 → x (in degrees, typically -30 to +30)
+  x = map(readChannel(1, 0, 1000), 0, 1000, -30, 30);
 
-  // Pitch: CH3 → y
-  y = readChannel(2, 0, 1000);
+  // Pitch: CH3 → y (in degrees, typically -30 to +30)
+  y = map(readChannel(2, 0, 1000), 0, 1000, -30, 30);
 
   // Switch: CH5 → button (1/0)
-  button = readChannel(4, 0, 1000);
-  x = map(readChannel(1, 0, 1000), 0, 1000, -30, 30);  // roll [deg]
-  y = map(readChannel(2, 0, 1000), 0, 1000, -30, 30);  // pitch [deg]
-*/
+  button = readSwitch(4);
 
   lastSignalTime = millis();
 }
 
-// ------------------ LAND ------------------
+
+// ===================== LANDING =====================
 void land() {
   static bool firstRun = true;
   static unsigned long lastStepTime = 0;
-  static float descentRate = 2.0;  // dynamic now
+  static float descentRate = 2.0;
 
   if (firstRun) {
     Serial.println("Landing started...");
     firstRun = false;
-    descentRate = 2.0;  // reset descent rate
+    descentRate = 2.0;
   }
 
-  // Abort manual landing if user presses button again (after 2s)
   if (!failsafeLanding && millis() - landingStartTime > 2000 && !button) {
     Serial.println("Landing aborted by user.");
     landingInProgress = false;
     firstRun = true;
-    lastLandingCommandTime = millis();  // prevent immediate retrigger
+    lastLandingCommandTime = millis();
     return;
   }
 
-  // Recover if signal returns during failsafe
   if (failsafeLanding && millis() - lastSignalTime < SIGNAL_TIMEOUT) {
     Serial.println("Signal recovered — resuming flight.");
     failsafeLanding = false;
@@ -817,15 +761,13 @@ void land() {
     return;
   }
 
-  // Gradually increase descent speed (optional, makes landing faster over time)
   descentRate += 0.05;
   descentRate = constrain(descentRate, 2.0, 10.0);
 
-  if (millis() - lastStepTime > 200) {  // step interval: 100ms
+  if (millis() - lastStepTime > 200) {
     lastStepTime = millis();
     throttle = max(1000, throttle - descentRate);
   }
-  // throttle = 1000;
 
   x = 0;
   y = 0;
@@ -834,17 +776,14 @@ void land() {
   PID_cascaded_Y();
   PID_cascaded_Z();
 
-
-  // Stop angle integration (important!)
   roll = pitch = kalmanAngleX = kalmanAngleY = 0;
   biasX = biasY = 0;
 
   for (int i = 0; i < 4; i++) {
     m[i].Final = throttle;
   }
-  motorchangetest(true);  // apply immediately
+  motorchangetest(true);
 
-  // Disarm once motors are low enough
   if (m[0].Power <= 1030 && m[1].Power <= 1030 && m[2].Power <= 1030 && m[3].Power <= 1030) {
     Serial.println("Landing complete. Drone disarmed.");
     for (int i = 0; i < 4; i++) {
@@ -858,7 +797,8 @@ void land() {
   }
 }
 
-// ------------------ DEBUG ------------------
+
+// ===================== DEBUG =====================
 void debug_output() {
   Serial.print(m[0].Power);
   Serial.print("/");
@@ -882,6 +822,7 @@ void debug_output() {
   Serial.print("/");
   Serial.println(button);
 }
+
 
 void LedBlinker() {
   static unsigned long lastBlinkTime = 0;
@@ -914,21 +855,11 @@ void LedBlinker() {
       digitalWrite(led, states[blinkPhase]);
       blinkPhase = (blinkPhase + 1) % patternCount;
     }
-
   } else if (armed) {
-    digitalWrite(led, HIGH);  // Solid on
+    digitalWrite(led, HIGH);
     blinkPhase = 0;
   } else {
-    digitalWrite(led, LOW);  // Solid off
+    digitalWrite(led, LOW);
     blinkPhase = 0;
   }
 }
-
-
-
-/* Led Understanding :-
-        
-        Just ON - Armed
-        Just OFF - Disarmed
-        
-        !  ! !  - Signal lost*/
