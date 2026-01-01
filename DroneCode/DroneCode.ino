@@ -183,9 +183,9 @@ void flyskyInit() {
 
 //const float KPIDD = 0.178, KPIDP = 1.59; //at 550
 //const float KPIDD = 0.01, KPIDP = 2.05;  // at 600+
- //float KPIDD = 0.05, KPIDP = 1.2;  // at 600+
- float KPIDD = 0.012, KPIDP = 1.4;  // at 600+
-const float OPIDP = 1;
+ //float KPIDD = 0.012, KPIDP = 1.4;  // at 600+
+ float KPIDD = 0.002, KPIDP = 0.5;  // at 600+
+const float OPIDP = 3;
 
 
 // ------------------ ESC CALIBRATION ------------------
@@ -410,6 +410,10 @@ void loop() {
     }
 
     printLoopHz();
+    Serial.print(PID_x);
+    Serial.print(",");
+    Serial.print(PID_y);
+    Serial.print(" | ");
     debug_output();
     /*
     Serial.print(" | ");
@@ -627,17 +631,10 @@ void PID_X() {
 
 
   float error_out = roll - x;
-  //Serial.print(error_out);
-  //Serial.print(",");
-  if (abs(error_out) < 0.1) error_out = 0;  //pid_i_x += ki_x * error;
-                                            //  pid_i_x = ki_x * error_out * elapsedTime;
-                                            //  pid_d_x = /*-kd_x * gyrRateX;*/ -kd_x * (error - previous_error_x) / elapsedTime;
+ 
+  if (abs(error_out) < 0.1) error_out = 0; 
 
-  // pid_i_x = constrain(pid_i_x, -50, 50);
-
-  // PID_x = kp_x * error + pid_i_x + pid_d_x;
-  // PID_x = constrain(PID_x, -400, 400);
-
+  //Outer 
   static float iRollAngle = 0, iRollRate = 0;
   iRollAngle += error_out * elapsedTime;  // small Ki here
   iRollAngle = constrain(iRollAngle, -500, 500);
@@ -647,17 +644,15 @@ void PID_X() {
 
   // Inner loop(rate)
   float eRateRoll = p_cmd - gyrRateX;
-  //Serial.print(eRateRoll);
-  //Serial.print(" | ");
-
+  
 
   iRollRate += eRateRoll * elapsedTime;
   iRollRate = constrain(iRollRate, -500, 500);
 
-  float dRateRoll = (eRateRoll - previous_error_x) / elapsedTime;
+  float dRateRoll = -gyrRateX;
   previous_error_x = eRateRoll;
 
-  PID_x = KPIDP * eRateRoll + 0 * iRollRate + KPIDD * dRateRoll;
+  PID_x = KPIDP * eRateRoll + 0.01 * iRollRate + KPIDD * dRateRoll;
 
   m[0].Final = throttle + PID_x;
   m[2].Final = throttle - PID_x;
@@ -667,20 +662,10 @@ void PID_X() {
 
 void PID_Y() {
   float error_out = pitch - y;
-
-  //Serial.print(error_out);
-  //Serial.print(",");
-  if (abs(error_out) < 0.1) error_out = 0;  // pid_i_y += ki_y * error;
-                                            /*pid_i_y = ki_y * error * elapsedTime;
-  pid_d_y = /*-kd_y * gyrRateY;*/
-  //  kd_y*(error - previous_error_y) / elapsedTime;
-
-  /*pid_i_y = constrain(pid_i_y, -50, 50);
-
-  PID_y = kp_y * error + pid_i_y + pid_d_y;
-  PID_y = constrain(PID_y, -400, 400);*/
+  if (abs(error_out) < 0.1) error_out = 0;  
 
 
+  //Outer
   static float iPitchAngle = 0, iPitchRate = 0;
   iPitchAngle += error_out * elapsedTime;  // small Ki here
   iPitchAngle = constrain(iPitchAngle, -500, 500);
@@ -690,17 +675,14 @@ void PID_Y() {
 
   // Inner loop(rate)
   float eRatePitch = p_cmd - gyrRateY;
-  //Serial.print(eRatePitch);
-
-
 
   iPitchRate += eRatePitch * elapsedTime;
   iPitchRate = constrain(iPitchRate, -500, 500);
 
-  float dRatePitch = (eRatePitch - previous_error_y) / elapsedTime;
+  float dRatePitch = -gyrRateY;
   previous_error_y = eRatePitch;
 
-  PID_y = KPIDP * eRatePitch + 0 * iPitchRate + KPIDD * dRatePitch;
+  PID_y = KPIDP * eRatePitch + 0.01 * iPitchRate + KPIDD * dRatePitch;
 
   m[1].Final = throttle + PID_y;
   m[3].Final = throttle - PID_y;
