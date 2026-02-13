@@ -16,7 +16,7 @@
 #define MAX_POWER 2000
 
 #define LOOP_FREQUENCY 200                         // Hz
-#define LOOP_PERIOD_US (1000000 / LOOP_FREQUENCY)  // 2500us for 400Hz
+#define LOOP_PERIOD_US (1000000 / LOOP_FREQUENCY)  // 2500us for 400Hz 
 
 
 
