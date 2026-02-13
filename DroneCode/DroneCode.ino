@@ -776,20 +776,27 @@ void motorchangetest(bool fast = false) {
 void recv() {
   // Throttle: CH1 → slider (0–1000)
 
-  slider = readChannel(0, 0, 1000);
-
+  float temp_x = readChannel(0, 0, 1000);
   // Roll: CH2 → x
-  /*
-  x = readChannel(1, 0, 1000);
+  float temp_y = readChannel(1, 0, 1000);
+
+  x=((temp_x-500)/500)*15;
+  Serial.print(x);
+  Serial.print(" , ");
+
+  y=((temp_y-500)/500)*15;
+  Serial.print(y);
+  Serial.print(" , ");
 
   // Pitch: CH3 → y
-  y = readChannel(2, 0, 1000);
-
+  slider = readChannel(2, 0, 1000);
+  Serial.print(slider);
+  Serial.println(" , ");
   // Switch: CH5 → button (1/0)
-  button = readChannel(4, 0, 1000);
+ // button = readChannel(4, 0, 1000);
   x = map(readChannel(1, 0, 1000), 0, 1000, -30, 30);  // roll [deg]
   y = map(readChannel(2, 0, 1000), 0, 1000, -30, 30);  // pitch [deg]
-*/
+
 
   lastSignalTime = millis();
 }
@@ -933,7 +940,7 @@ void LedBlinker() {
 
 
 
-/* Led Understanding :-
+/* Led Understanding :- 
         
         Just ON - Armed
         Just OFF - Disarmed
