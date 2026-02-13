@@ -15,7 +15,7 @@
 #define MIN_POWER 1000
 #define MAX_POWER 2000
 
-#define LOOP_FREQUENCY 100                         // Hz
+#define LOOP_FREQUENCY 200                         // Hz
 #define LOOP_PERIOD_US (1000000 / LOOP_FREQUENCY)  // 2500us for 400Hz
 
 
@@ -431,11 +431,13 @@ void loop() {
     }
 
     printLoopHz();
-    Serial.print(PID_x);
+    /*Serial.print(PID_x);
     Serial.print(",");
     Serial.print(PID_y);
+    Serial.print(",");
+    Serial.print(PID_z);
     Serial.print(" | ");
-    debug_output();
+    debug_output();*/
     /*
     Serial.print(" | ");
     Serial.print(millis());
@@ -704,10 +706,15 @@ float innerRatePID(float rateCmd, float gyroRate, float& iRate, float dt) {
  * Yaw control: Diagonal pairs
  */
 void mixPlus(float base, float PIDx, float PIDy, float PIDz) {
-  float mF = base + (-PIDy) + (0) + (+PIDz);
+  /*float mF = base + (-PIDy) + (0) + (+PIDz);
   float mR = base + (0) + (-PIDx) + (-PIDz);
   float mB = base + (+PIDy) + (0) + (+PIDz);
-  float mL = base + (0) + (+PIDx) + (-PIDz);
+  float mL = base + (0) + (+PIDx) + (-PIDz);*/
+
+  float mF = base + (-PIDy) + (0) + (+0);
+  float mR = base + (0) + (-PIDx) + (-0);
+  float mB = base + (+PIDy) + (0) + (+0);
+  float mL = base + (0) + (+PIDx) + (-0);
 
   m[0].Final = constrain(mF, 1000.0f, 2000.0f);
   m[1].Final = constrain(mR, 1000.0f, 2000.0f);
