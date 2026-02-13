@@ -8,7 +8,7 @@
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950       // Set to 2000 for full range
-#define TEST_MODE true          // Set to false for actual flight
+#define TEST_MODE false          // Set to false for actual flight
 #define CALIBRATION_MODE false  // Set to false after calibration is done
 
 
@@ -29,13 +29,6 @@ bool armed = true;
 unsigned long currentTime = 0, previousTime = 0;
 float elapsedTime = 0;
 
-unsigned long lastSignalTime = 0;
-const unsigned long SIGNAL_TIMEOUT = 1000;  // in milliseconds
-bool failsafeLanding = false;
-bool landingInProgress = false;
-unsigned long landingStartTime = 0;
-unsigned long lastLandingCommandTime = 0;
-const unsigned long LANDING_COMMAND_COOLDOWN = 1000;  // ms
 
 // IMU
 float accRaw[3], accAngle[3], accError[3];
@@ -113,7 +106,7 @@ void motorchangetest(bool fast = false);
 // Remote
 
 int slider = 0, x = 0, y = 0;
-bool button = 1;
+
 
 // ===================== FlySky CT6B RECEIVER (PWM channels) =====================
 #define CH1_PIN 2  // Throttle
@@ -249,7 +242,7 @@ void esc_calibration() {
 
 // ------------------ SETUP ------------------
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Wire.begin();
   Serial.println("Started serial monitor output");
   pinMode(led, OUTPUT);
@@ -320,6 +313,15 @@ void setup() {
   Serial.println("Finished Testing remote");
   Serial.println("System ready");
   delay(5000);
+  prev_roll = prev_pitch = prev_yaw = 0;
+  roll = pitch = yaw = 0;
+  kalmanAngleX = 0;
+  kalmanAngleY = 0;
+  biasX = biasY = 0;
+  x = y = 0;
+  iRateRoll = 0;
+  iRatePitch = 0;
+  iRateYaw = 0;
 }
 
 
@@ -345,7 +347,7 @@ void loop() {
   elapsedTime = (currentTime - previousTime) / 1000.0f;
 
 
-  if (!TEST_MODE && !landingInProgress) {
+  if (!TEST_MODE) {
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
   }
   if (TEST_MODE) {
@@ -356,89 +358,41 @@ void loop() {
     SerialReader();
 
     throttle = constrain(1000 + slider, 1000, MAX_THROTTLE);
-    armed = true;
-    lastSignalTime = millis();
 
-    button = 1;
+
   } else {
     recv();
-    static bool lastButton = 1;
-    if (lastButton == 1 && button == 0) {
-      if (!armed) {
-        // Only allow arming if throttle is below 1050
-        if (throttle <= 1050) {
-          armed = true;
-          Serial.println("Drone ARMED");
-          prev_roll = prev_pitch = prev_yaw = 0;
-          roll = pitch = yaw = 0;
-          kalmanAngleX = 0;
-          kalmanAngleY = 0;
-          biasX = biasY = 0;
-
-          iRateRoll = 0;
-          iRatePitch = 0;
-          iRateYaw = 0;
-
-        } else {
-          Serial.println("Throttle too high! Set throttle below 1050 to arm.");
-          digitalWrite(led, HIGH);
-          delay(500);
-          digitalWrite(led, LOW);
-          delay(500);
-          digitalWrite(led, HIGH);
-          delay(500);
-          digitalWrite(led, LOW);
-        }
-      } else if (!landingInProgress && millis() - lastLandingCommandTime > LANDING_COMMAND_COOLDOWN) {
-        landingInProgress = true;
-        landingStartTime = millis();
-        lastLandingCommandTime = millis();
-        Serial.println("Landing triggered by user.");
-      }
-    }
-    lastButton = button;
   }
 
-  if (armed) {
 
 
-    IMU();
 
-    if (!TEST_MODE && millis() - lastSignalTime > SIGNAL_TIMEOUT && !failsafeLanding) {
-      Serial.println("Signal lost — initiating emergency landing.");
-      failsafeLanding = true;
-      landingInProgress = true;
-      landingStartTime = millis();
-    }
+  IMU();
 
-    if (landingInProgress) {
-      land();
+  PID_cascaded_X();
+  PID_cascaded_Y();
+  PID_cascaded_Z();
+  mixPlus(throttle, PID_x, PID_y, PID_z);
+  if (throttle <= 1050) {
+    PID_x = PID_y = PID_z = 0;
+    iRateRoll = 0;
+    iRatePitch = 0;
+    iRateYaw = 0;
+    for (int i = 0; i < 4; i++) m[i].Final = throttle;
+  }
 
-    } else {
-      PID_cascaded_X();
-      PID_cascaded_Y();
-      PID_cascaded_Z();
-      mixPlus(throttle, PID_x, PID_y, PID_z);
-      if (throttle <= 1050 && !landingInProgress) {
-        PID_x = PID_y = PID_z = 0;
-        iRateRoll = 0;
-        iRatePitch = 0;
-        iRateYaw = 0;
-        for (int i = 0; i < 4; i++) m[i].Final = throttle;
-      }
+  motorchangetest(false);
 
-      motorchangetest(false);
-    }
 
-    printLoopHz();
-    /*Serial.print(PID_x);
+  printLoopHz();
+  /*Serial.print(PID_x);
     Serial.print(",");
     Serial.print(PID_y);
     Serial.print(",");
     Serial.print(PID_z);
-    Serial.print(" | ");
-    debug_output();*/
-    /*
+    Serial.print(" | ");*/
+  debug_output();
+  /*
     Serial.print(" | ");
     Serial.print(millis());
     Serial.print(" | ");
@@ -458,7 +412,7 @@ void loop() {
     Serial.print(roll);
     Serial.print(",");
     Serial.println(pitch);*/
-  }
+
   //delayMicroseconds(100);
 }
 
@@ -774,102 +728,15 @@ void motorchangetest(bool fast = false) {
 
 // ------------------ RECV ------------------
 void recv() {
-  // Throttle: CH1 → slider (0–1000)
+  // Throttle
+  slider = readChannel(0, 0, 1000);   // CH1
 
-  float temp_x = readChannel(0, 0, 1000);
-  // Roll: CH2 → x
-  float temp_y = readChannel(1, 0, 1000);
+  // Roll and Pitch
+  int rawRoll  = readChannel(1, 0, 1000);  // CH2
+  int rawPitch = readChannel(2, 0, 1000);  // CH3
 
-  x=((temp_x-500)/500)*15;
-  Serial.print(x);
-  Serial.print(" , ");
-
-  y=((temp_y-500)/500)*15;
-  Serial.print(y);
-  Serial.print(" , ");
-
-  // Pitch: CH3 → y
-  slider = readChannel(2, 0, 1000);
-  Serial.print(slider);
-  Serial.println(" , ");
-  // Switch: CH5 → button (1/0)
- // button = readChannel(4, 0, 1000);
-  x = map(readChannel(1, 0, 1000), 0, 1000, -30, 30);  // roll [deg]
-  y = map(readChannel(2, 0, 1000), 0, 1000, -30, 30);  // pitch [deg]
-
-
-  lastSignalTime = millis();
-}
-
-// ------------------ LAND ------------------
-void land() {
-  static bool firstRun = true;
-  static unsigned long lastStepTime = 0;
-  static float descentRate = 2.0;  // dynamic now
-
-  if (firstRun) {
-    Serial.println("Landing started...");
-    firstRun = false;
-    descentRate = 2.0;  // reset descent rate
-  }
-
-  // Abort manual landing if user presses button again (after 2s)
-  if (!failsafeLanding && millis() - landingStartTime > 2000 && !button) {
-    Serial.println("Landing aborted by user.");
-    landingInProgress = false;
-    firstRun = true;
-    lastLandingCommandTime = millis();  // prevent immediate retrigger
-    return;
-  }
-
-  // Recover if signal returns during failsafe
-  if (failsafeLanding && millis() - lastSignalTime < SIGNAL_TIMEOUT) {
-    Serial.println("Signal recovered — resuming flight.");
-    failsafeLanding = false;
-    landingInProgress = false;
-    firstRun = true;
-    return;
-  }
-
-  // Gradually increase descent speed (optional, makes landing faster over time)
-  descentRate += 0.05;
-  descentRate = constrain(descentRate, 2.0, 10.0);
-
-  if (millis() - lastStepTime > 200) {  // step interval: 100ms
-    lastStepTime = millis();
-    throttle = max(1000, throttle - descentRate);
-  }
-  // throttle = 1000;
-
-  x = 0;
-  y = 0;
-  IMU();
-  PID_cascaded_X();
-  PID_cascaded_Y();
-  PID_cascaded_Z();
-
-
-  // Stop angle integration (important!)
-  roll = pitch = kalmanAngleX = kalmanAngleY = 0;
-  biasX = biasY = 0;
-
-  for (int i = 0; i < 4; i++) {
-    m[i].Final = throttle;
-  }
-  motorchangetest(true);  // apply immediately
-
-  // Disarm once motors are low enough
-  if (m[0].Power <= 1030 && m[1].Power <= 1030 && m[2].Power <= 1030 && m[3].Power <= 1030) {
-    Serial.println("Landing complete. Drone disarmed.");
-    for (int i = 0; i < 4; i++) {
-      m[i].Power = 1000;
-      m[i].update();
-    }
-    armed = false;
-    failsafeLanding = false;
-    landingInProgress = false;
-    firstRun = true;
-  }
+  x = map(rawRoll, 0, 1000, -15, 15);
+  y = map(rawPitch, 0, 1000, -15, 15);
 }
 
 // ------------------ DEBUG ------------------
@@ -892,49 +759,15 @@ void debug_output() {
   Serial.print("/");
   Serial.print(x);
   Serial.print("/");
-  Serial.print(y);
-  Serial.print("/");
-  Serial.println(button);
+  Serial.println(y);
 }
 
 void LedBlinker() {
-  static unsigned long lastBlinkTime = 0;
-  static int blinkPhase = 0;
-  static const int failsafePatternCount = 6;
-  static const int landingPatternCount = 2;
-  static const int failsafeTimes[failsafePatternCount] = { 300, 100, 100, 50, 50, 1000 };
-  static const bool failsafeStates[failsafePatternCount] = { HIGH, LOW, HIGH, LOW, HIGH, LOW };
-  static const int landingTimes[landingPatternCount] = { 300, 300 };
-  static const bool landingStates[landingPatternCount] = { HIGH, LOW };
-
-  if (failsafeLanding || landingInProgress) {
-    unsigned long now = millis();
-    const int* blinkTimes;
-    const bool* states;
-    int patternCount;
-
-    if (failsafeLanding) {
-      blinkTimes = failsafeTimes;
-      states = failsafeStates;
-      patternCount = failsafePatternCount;
-    } else {
-      blinkTimes = landingTimes;
-      states = landingStates;
-      patternCount = landingPatternCount;
-    }
-
-    if (now - lastBlinkTime >= blinkTimes[blinkPhase]) {
-      lastBlinkTime = now;
-      digitalWrite(led, states[blinkPhase]);
-      blinkPhase = (blinkPhase + 1) % patternCount;
-    }
-
-  } else if (armed) {
+  if (armed) {
     digitalWrite(led, HIGH);  // Solid on
-    blinkPhase = 0;
+
   } else {
     digitalWrite(led, LOW);  // Solid off
-    blinkPhase = 0;
   }
 }
 
