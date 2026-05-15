@@ -8,7 +8,7 @@
 #define RAD2DEG (180.0 / 3.14159265)
 #define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950       // Set to 2000 for full range
-#define TEST_MODE true          // Set to false for actual flight
+#define TEST_MODE false          // Set to false for actual flight
 #define CALIBRATION_MODE false  // Set to false after calibration is done
 
 
@@ -64,9 +64,9 @@ const float ANGLE_DB_DEG = 0.2;
 const float RATECMD_LIM_DPS = 60.0;
 
 // ===== Inner loop (rate PID) =====
-float KPIDP = 0.5;    //TUNING CONSTANT
-float KPIDI = 0.01;   //TUNING CONSTANT
-float KPIDD = 0.002;  //TUNING CONSTANT
+float KPIDP = 2;    //TUNING CONSTANT
+float KPIDI = 0;   //TUNING CONSTANT
+float KPIDD = 0.5;  //TUNING CONSTANT
 
 const float PID_LIM = 350;  // us
 const float IRATE_LIM = 80;
@@ -249,7 +249,7 @@ void esc_calibration() {
 
 // ------------------ SETUP ------------------
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Wire.begin();
   Serial.println("Started serial monitor output");
   pinMode(led, OUTPUT);
@@ -417,7 +417,7 @@ void loop() {
     } else {
       PID_cascaded_X();
       PID_cascaded_Y();
-      PID_cascaded_Z();
+      //PID_cascaded_Z();
       mixPlus(throttle, PID_x, PID_y, PID_z);
       if (throttle <= 1050 && !landingInProgress) {
         PID_x = PID_y = PID_z = 0;
@@ -438,7 +438,7 @@ void loop() {
     Serial.print(PID_z);
     Serial.print(" | ");
     debug_output();*/
-    /*
+    
     Serial.print(" | ");
     Serial.print(millis());
     Serial.print(" | ");
@@ -457,7 +457,7 @@ void loop() {
     Serial.print(",");
     Serial.print(roll);
     Serial.print(",");
-    Serial.println(pitch);*/
+    Serial.println(pitch);
   }
   //delayMicroseconds(100);
 }
@@ -774,10 +774,10 @@ void motorchangetest(bool fast = false) {
 
 // ------------------ RECV ------------------
 void recv() {
-  // Throttle: CH1 → slider (0–1000)
+  // Throttle: CH3 → slider (0–1000)
 
   float temp_x = readChannel(0, 0, 1000);
-  // Roll: CH2 → x
+  // Roll: CH1 → x
   float temp_y = readChannel(1, 0, 1000);
 
   x=((temp_x-500)/500)*15;
@@ -788,14 +788,14 @@ void recv() {
   Serial.print(y);
   Serial.print(" , ");
 
-  // Pitch: CH3 → y
+  // Pitch: CH2 → y
   slider = readChannel(2, 0, 1000);
   Serial.print(slider);
   Serial.println(" , ");
   // Switch: CH5 → button (1/0)
  // button = readChannel(4, 0, 1000);
-  x = map(readChannel(1, 0, 1000), 0, 1000, -30, 30);  // roll [deg]
-  y = map(readChannel(2, 0, 1000), 0, 1000, -30, 30);  // pitch [deg]
+  //x = map(readChannel(1, 0, 1000), 0, 1000, -30, 30);  // roll [deg]
+  //y = map(readChannel(2, 0, 1000), 0, 1000, -30, 30);  // pitch [deg]
 
 
   lastSignalTime = millis();
