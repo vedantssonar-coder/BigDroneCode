@@ -29,15 +29,6 @@ unsigned long currentTime = 0, previousTime = 0;
 float elapsedTime = 0;
 
 // ============================================================
-// FAILSAFE / LANDING
-// ============================================================
-unsigned long lastSignalTime = 0;
-const unsigned long SIGNAL_TIMEOUT = 1000;  // ms without a valid iBUS frame
-bool failsafeLanding   = false;
-bool landingInProgress = false;
-unsigned long landingStartTime = 0;
-
-// ============================================================
 // IMU — Mahony quaternion filter
 // ============================================================
 const float MOUNT_OFFSET_ROLL  = -2.0f;
@@ -83,11 +74,14 @@ float iRateYaw   = 0;
 // iBUS always encodes channel values as 1000–2000 (PWM µs range).
 // CH1 = Pitch (y) | CH2 = Roll (x) | CH3 = Throttle
 // CH4 = Yaw       | CH5 = mirror of CH2, ignored | CH6 = spare
+//
+// On signal loss, ibusChannels[] is simply left untouched (it's only
+// overwritten when a frame passes checksum), so the last good stick
+// values are held automatically — no failsafe logic needed for this.
 // ============================================================
 #define IBUS_LENGTH 32
 uint8_t  ibusBuf[IBUS_LENGTH];
 uint8_t  ibusIdx = 0;
-// Safe defaults: sticks centred, throttle at minimum
 uint16_t ibusChannels[6] = {1500, 1500, 1000, 1500, 1500, 1500};
 
 #define PWM_MIN      1000
@@ -184,13 +178,12 @@ void IMU() {
   Wire.write(0x3B);
   Wire.endTransmission(false);
 
-  // Burst read: accel(6) + temp(2, discarded) + gyro(6) = 14 bytes
   if (Wire.requestFrom(MPU_ADDR, 14) != 14) return;
 
   float ax_raw = (Wire.read() << 8 | Wire.read()) / 4096.0f;
   float ay_raw = (Wire.read() << 8 | Wire.read()) / 4096.0f;
   float az_raw = (Wire.read() << 8 | Wire.read()) / 4096.0f;
-  Wire.read(); Wire.read();  // temperature — discard
+  Wire.read(); Wire.read();
   float gx = ((Wire.read() << 8 | Wire.read()) / 32.8f - gyrError[0]) * DEG2RAD;
   float gy = ((Wire.read() << 8 | Wire.read()) / 32.8f - gyrError[1]) * DEG2RAD;
   float gz = ((Wire.read() << 8 | Wire.read()) / 32.8f - gyrError[2]) * DEG2RAD;
@@ -242,7 +235,6 @@ void calculate_IMU_error() {
   Serial.print(gyrError[1]); Serial.print(", ");
   Serial.println(gyrError[2]);
 
-  // Average accel over 500 samples to seed the quaternion at actual tilt
   float axSum = 0, aySum = 0, azSum = 0;
   for (int i = 0; i < 500; i++) {
     Wire.beginTransmission(MPU_ADDR);
@@ -290,7 +282,6 @@ bool ibusValidChecksum(uint8_t *frame) {
   return csum == (uint16_t)(frame[30] | (frame[31] << 8));
 }
 
-// Call every loop — drains RX buffer, updates ibusChannels[] on valid frame
 void ibusRead() {
   while (Serial.available()) {
     uint8_t b = Serial.read();
@@ -306,9 +297,8 @@ void ibusRead() {
         for (uint8_t i = 0; i < 6; i++) {
           ibusChannels[i] = ibusBuf[2 + i*2] | (ibusBuf[3 + i*2] << 8);
         }
-        lastSignalTime = millis();
       }
-      // Invalid frames dropped silently — printing here would corrupt RX timing
+      // Invalid/missing frames leave ibusChannels[] untouched.
     }
   }
 }
@@ -316,29 +306,19 @@ void ibusRead() {
 void recv() {
   ibusRead();
 
-  // All iBUS channel values are in the range 1000–2000 µs (standard PWM).
-  // If your transmitter outputs a different range, adjust PWM_MIN/MAX above.
-
-  // CH1 → Pitch (y): 1000–2000 → -15 to +15 deg, deadzone around centre
   int rawY = constrain((int)ibusChannels[0], PWM_MIN, PWM_MAX);
   if (abs(rawY - PWM_MID) < PWM_DEADZONE) rawY = PWM_MID;
   y = (int)(((rawY - PWM_MID) / 500.0f) * 15.0f);
 
-  // CH2 → Roll (x): 1000–2000 → -15 to +15 deg
   int rawX = constrain((int)ibusChannels[1], PWM_MIN, PWM_MAX);
   if (abs(rawX - PWM_MID) < PWM_DEADZONE) rawX = PWM_MID;
   x = (int)(((rawX - PWM_MID) / 500.0f) * 15.0f);
 
-  // CH3 → Throttle: 1000–2000 → 0–1000
   slider = constrain((int)ibusChannels[2] - PWM_MIN, 0, 1000);
 
-  // CH4 → Yaw rate: 1000–2000 → -60 to +60 deg/s
   int rawYaw = constrain((int)ibusChannels[3], PWM_MIN, PWM_MAX);
   if (abs(rawYaw - PWM_MID) < PWM_DEADZONE) rawYaw = PWM_MID;
   yawRateCmd = ((rawYaw - PWM_MID) / 500.0f) * 60.0f;
-
-  // CH5 = hardware mirror of CH2 — ignored
-  // CH6 = spare — ignored
 }
 
 // ============================================================
@@ -364,33 +344,28 @@ void esc_calibration() {
 // SETUP
 // ============================================================
 void setup() {
-  // Serial is shared: iBUS arrives on RX (pin 0), debug goes out on TX (pin 1).
-  // They are separate physical pins so they coexist. Never call Serial.read()
-  // outside of ibusRead() or it will steal bytes from iBUS frames.
   Serial.begin(115200);
 
   Wire.begin();
-  // 400 kHz I2C — lower to Wire.setClock(100000) if IMU reads look noisy
   Wire.setClock(400000);
 
   pinMode(led,  OUTPUT);
   pinMode(led1, OUTPUT);
 
-  // MPU-6050 init
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x6B); Wire.write(0x00);  // wake, internal clock
+  Wire.write(0x6B); Wire.write(0x00);
   Wire.endTransmission();
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1C); Wire.write(0x10);  // accel ±8 g
+  Wire.write(0x1C); Wire.write(0x10);
   Wire.endTransmission();
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1B); Wire.write(0x10);  // gyro ±1000 °/s
+  Wire.write(0x1B); Wire.write(0x10);
   Wire.endTransmission();
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1A); Wire.write(0x05);  // DLPF ~10 Hz
+  Wire.write(0x1A); Wire.write(0x05);
   Wire.endTransmission();
 
   digitalWrite(led, HIGH);
@@ -406,13 +381,12 @@ void setup() {
 
   if (CALIBRATION_MODE) esc_calibration();
 
-  // Standard ESC arming pulse
   for (int i = 0; i < 4; i++) { m[i].Power = 2000; m[i].update(); }
   delay(100);
   for (int i = 0; i < 4; i++) { m[i].Power = 1000; m[i].update(); }
 
   Serial.println("System ready.");
-  delay(2000);  // let iBUS stream stabilise before first recv()
+  delay(2000);
 }
 
 // ============================================================
@@ -431,31 +405,13 @@ void loop() {
   elapsedTime  = (currentTime - previousTime) / 1000.0f;
   if (elapsedTime <= 0 || elapsedTime > 0.05f) elapsedTime = 0.01f;
 
-  recv();  // drain iBUS buffer — also updates lastSignalTime on valid frame
+  recv();
 
-  // Update throttle from stick unless failsafe landing is overriding it
-  if (!landingInProgress) {
-    throttle = constrain(1000.0f + slider, 1000.0f, (float)MAX_THROTTLE);
-  }
+  throttle = constrain(1000.0f + slider, 1000.0f, (float)MAX_THROTTLE);
 
-  // IMU runs every loop regardless of throttle — keeps filter converged
   IMU();
 
-  // ---- Failsafe: trigger slow descent on sustained signal loss ----
-  if (millis() - lastSignalTime > SIGNAL_TIMEOUT && !failsafeLanding) {
-    Serial.println("Signal lost — failsafe landing.");
-    failsafeLanding   = true;
-    landingInProgress = true;
-    landingStartTime  = millis();
-  }
-
-  // ---- State machine ----
-  if (landingInProgress) {
-    // Failsafe slow descent — land() handles its own PID and motor writes
-    land();
-
-  } else if (throttle >= PID_THROTTLE_MIN) {
-    // Normal flight — PIDs active
+  if (throttle >= PID_THROTTLE_MIN) {
     PID_cascaded_X();
     PID_cascaded_Y();
     // PID_cascaded_Z();  // yaw not wired into mixer yet — enable when ready
@@ -463,7 +419,6 @@ void loop() {
     motorchangetest(false);
 
   } else {
-    // Throttle below minimum — PIDs off, motors get raw throttle only
     PID_x = PID_y = PID_z = 0;
     iRateRoll = iRatePitch = iRateYaw = 0;
     for (int i = 0; i < 4; i++) {
@@ -474,7 +429,6 @@ void loop() {
 
   printLoopHz();
 
-  // Debug output throttled to every 100 ms — printing at 200 Hz would stall timing
   static unsigned long lastDebug = 0;
   if (millis() - lastDebug >= 100) {
     lastDebug = millis();
@@ -504,7 +458,7 @@ float outerAngleToRate(float cmdDeg, float measDeg, float OPIDP) {
 float innerRatePID(float rateCmd, float gyroRate, float &iRate, float dt) {
   float rateErr = rateCmd - gyroRate;
   float pTerm   = KPIDP * rateErr;
-  float dTerm   = KPIDD * (-gyroRate);  // gyro-based D — no derivative kick on setpoint change
+  float dTerm   = KPIDD * (-gyroRate);
   float uNoI    = pTerm + dTerm;
   float uPred   = uNoI + KPIDI * iRate;
 
@@ -519,7 +473,6 @@ float innerRatePID(float rateCmd, float gyroRate, float &iRate, float dt) {
 }
 
 void mixPlus(float base, float PIDx, float PIDy, float PIDz) {
-  // Motor layout: Front(0) Right(1) Back(2) Left(3)
   m[0].Final = constrain(base - PIDy, 1000.0f, 2000.0f);  // Front
   m[1].Final = constrain(base - PIDx, 1000.0f, 2000.0f);  // Right
   m[2].Final = constrain(base + PIDy, 1000.0f, 2000.0f);  // Back
@@ -537,7 +490,6 @@ void PID_cascaded_Y() {
 }
 
 void PID_cascaded_Z() {
-  // yawRateCmd comes directly from CH4 stick — no outer angle loop needed for yaw
   PID_z = innerRatePID(yawRateCmd, gyrRateZ, iRateYaw, elapsedTime);
 }
 
@@ -554,62 +506,7 @@ void motorchangetest(bool fast) {
 }
 
 // ============================================================
-// FAILSAFE LANDING
-// Manual trigger removed — this only runs on signal loss.
-// If signal recovers mid-descent, normal flight resumes immediately.
-// ============================================================
-void land() {
-  static bool  firstRun     = true;
-  static unsigned long lastStepTime = 0;
-  static float descentRate  = 2.0f;
-
-  if (firstRun) {
-    Serial.println("Failsafe landing started...");
-    firstRun    = false;
-    descentRate = 2.0f;
-  }
-
-  // Signal recovered — hand back control immediately
-  if (millis() - lastSignalTime < SIGNAL_TIMEOUT) {
-    Serial.println("Signal recovered — resuming normal flight.");
-    failsafeLanding   = false;
-    landingInProgress = false;
-    firstRun          = true;
-    // Restore throttle from stick so there is no jump
-    throttle = constrain(1000.0f + slider, 1000.0f, (float)MAX_THROTTLE);
-    return;
-  }
-
-  // Gradually increase descent speed over time
-  descentRate = constrain(descentRate + 0.05f, 2.0f, 10.0f);
-
-  if (millis() - lastStepTime > 200) {
-    lastStepTime = millis();
-    throttle = max(1000.0f, throttle - descentRate);
-  }
-
-  // Level-hold during descent — PIDs stay active with zero stick input
-  x = 0; y = 0;
-  PID_cascaded_X();
-  PID_cascaded_Y();
-  PID_cascaded_Z();
-
-  for (int i = 0; i < 4; i++) m[i].Final = throttle;
-  motorchangetest(true);
-
-  // Once all motors are at minimum, cut power
-  if (m[0].Power <= 1030 && m[1].Power <= 1030 &&
-      m[2].Power <= 1030 && m[3].Power <= 1030) {
-    Serial.println("Landing complete.");
-    for (int i = 0; i < 4; i++) { m[i].Power = 1000; m[i].update(); }
-    failsafeLanding   = false;
-    landingInProgress = false;
-    firstRun          = true;
-  }
-}
-
-// ============================================================
-// DEBUG / STATUS
+// DEBUG / STATUS  (defined, not currently called from loop())
 // ============================================================
 void debug_output() {
   Serial.print(m[0].Power); Serial.print("/");
@@ -637,32 +534,10 @@ void printLoopHz() {
 }
 
 void LedBlinker() {
-  static unsigned long lastBlinkTime = 0;
-  static int blinkPhase = 0;
-
-  static const int  failsafeTimes[6]  = {300, 100, 100, 50, 50, 1000};
-  static const bool failsafeStates[6] = {HIGH, LOW, HIGH, LOW, HIGH, LOW};
-  static const int  landingTimes[2]   = {300, 300};
-  static const bool landingStates[2]  = {HIGH, LOW};
-
-  if (failsafeLanding) {
-    if (millis() - lastBlinkTime >= (unsigned long)failsafeTimes[blinkPhase]) {
-      lastBlinkTime = millis();
-      digitalWrite(led, failsafeStates[blinkPhase]);
-      blinkPhase = (blinkPhase + 1) % 6;
-    }
-  } else if (landingInProgress) {
-    if (millis() - lastBlinkTime >= (unsigned long)landingTimes[blinkPhase]) {
-      lastBlinkTime = millis();
-      digitalWrite(led, landingStates[blinkPhase]);
-      blinkPhase = (blinkPhase + 1) % 2;
-    }
-  } else if (throttle >= PID_THROTTLE_MIN) {
+  if (throttle >= PID_THROTTLE_MIN) {
     digitalWrite(led, HIGH);  // solid on = PIDs active
-    blinkPhase = 0;
   } else {
     digitalWrite(led, LOW);   // off = throttle idle
-    blinkPhase = 0;
   }
 }
 
@@ -673,8 +548,6 @@ void LedBlinker() {
  * of positive, add  roll = -roll;  after the MOUNT_OFFSET line in IMU().
  *
  * LED guide:
- *   Solid ON        throttle >= 1100, PIDs active
- *   Solid OFF       throttle < 1100, PIDs off
- *   Slow blink      failsafe landing in progress
- *   Long-short-short pattern  signal lost
+ *   Solid ON   throttle >= 1100, PIDs active
+ *   Solid OFF  throttle < 1100, PIDs off
  */
