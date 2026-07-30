@@ -1,14 +1,18 @@
+// +Drone
 #include <Wire.h>
 #include <ServoTimer2.h>
+
+#include <SoftwareSerial.h>
+SoftwareSerial dbg(3, 2);  // pin 3 = unused RX, pin 2 = TX (debug out, to 2nd Uno)
 
 // ============================================================
 // DEFINES
 // ============================================================
-#define RAD2DEG      (180.0f / 3.14159265f)
-#define DEG2RAD      (3.14159265f / 180.0f)
-#define MPU_ADDR     0x68
+#define RAD2DEG (180.0f / 3.14159265f)
+#define DEG2RAD (3.14159265f / 180.0f)
+#define MPU_ADDR 0x68
 #define MAX_THROTTLE 1950
-#define TEST_MODE    false
+#define TEST_MODE false
 #define CALIBRATION_MODE false
 
 #define LOOP_FREQUENCY 200
@@ -19,7 +23,7 @@
 // ============================================================
 // PINS
 // ============================================================
-const int led  = 12;
+const int led = 12;
 const int led1 = 13;
 
 // ============================================================
@@ -31,10 +35,10 @@ float elapsedTime = 0;
 // ============================================================
 // IMU — Mahony quaternion filter
 // ============================================================
-const float MOUNT_OFFSET_ROLL  = -2.0f;
-const float MOUNT_OFFSET_PITCH =  0.35f;
+const float MOUNT_OFFSET_ROLL = -2.82f;
+const float MOUNT_OFFSET_PITCH = 0.53f;
 
-float gyrError[3] = {0, 0, 0};
+float gyrError[3] = { 0, 0, 0 };
 float roll = 0, pitch = 0, yaw = 0;
 float prev_roll = 0, prev_pitch = 0, prev_yaw = 0;
 float gyrRateX = 0, gyrRateY = 0, gyrRateZ = 0;
@@ -52,42 +56,38 @@ const float ACC_LPF = 0.2f;
 // ============================================================
 float PID_x = 0, PID_y = 0, PID_z = 0;
 
-const float OPIDP_ROLL  = 3.0f;
+const float OPIDP_ROLL = 3.0f;
 const float OPIDP_PITCH = 3.0f;
-const float OPIDP_YAW   = 2.0f;
-const float ANGLE_DB_DEG    = 0.2f;
+const float OPIDP_YAW = 2.0f;
+const float ANGLE_DB_DEG = 0.2f;
 const float RATECMD_LIM_DPS = 60.0f;
 
 float KPIDP = 2.0f;
 float KPIDI = 0.0f;
 float KPIDD = 0.5f;
 
-const float PID_LIM   = 350.0f;
-const float IRATE_LIM =  80.0f;
+const float PID_LIM = 350.0f;
+const float IRATE_LIM = 80.0f;
 
-float iRateRoll  = 0;
+float iRateRoll = 0;
 float iRatePitch = 0;
-float iRateYaw   = 0;
+float iRateYaw = 0;
 
 // ============================================================
-// iBUS RECEIVER
+// iBUS RECEIVER  (hardware Serial — pins 0/1)
 // iBUS always encodes channel values as 1000–2000 (PWM µs range).
 // CH1 = Pitch (y) | CH2 = Roll (x) | CH3 = Throttle
 // CH4 = Yaw       | CH5 = mirror of CH2, ignored | CH6 = spare
-//
-// On signal loss, ibusChannels[] is simply left untouched (it's only
-// overwritten when a frame passes checksum), so the last good stick
-// values are held automatically — no failsafe logic needed for this.
 // ============================================================
 #define IBUS_LENGTH 32
-uint8_t  ibusBuf[IBUS_LENGTH];
-uint8_t  ibusIdx = 0;
-uint16_t ibusChannels[6] = {1500, 1500, 1000, 1500, 1500, 1500};
+uint8_t ibusBuf[IBUS_LENGTH];
+uint8_t ibusIdx = 0;
+uint16_t ibusChannels[6] = { 1500, 1500, 1000, 1500, 1500, 1500 };
 
-#define PWM_MIN      1000
-#define PWM_MAX      2000
-#define PWM_MID      1500
-#define PWM_DEADZONE   50
+#define PWM_MIN 1000
+#define PWM_MAX 2000
+#define PWM_MID 1500
+#define PWM_DEADZONE 50
 
 int slider = 0, x = 0, y = 0;
 float yawRateCmd = 0;
@@ -101,7 +101,8 @@ class Motor {
 public:
   const int index;
   float Power = 1000, Initial = 1000, Final = 1000;
-  Motor(int i) : index(i) {}
+  Motor(int i)
+    : index(i) {}
   void update() {
     esc[index].write(constrain((int)Power, 1000, 2000));
   }
@@ -120,54 +121,70 @@ float invSqrt(float x) {
 
 void mahonyUpdate(float gx, float gy, float gz,
                   float ax, float ay, float az, float dt) {
-  float norm = invSqrt(ax*ax + ay*ay + az*az);
+  float norm = invSqrt(ax * ax + ay * ay + az * az);
   if (!isfinite(norm) || norm == 0) return;
-  ax *= norm; ay *= norm; az *= norm;
+  ax *= norm;
+  ay *= norm;
+  az *= norm;
 
-  float vx = 2.0f*(q1*q3 - q0*q2);
-  float vy = 2.0f*(q0*q1 + q2*q3);
-  float vz = q0*q0 - q1*q1 - q2*q2 + q3*q3;
+  float vx = 2.0f * (q1 * q3 - q0 * q2);
+  float vy = 2.0f * (q0 * q1 + q2 * q3);
+  float vz = q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3;
 
-  float ex = ay*vz - az*vy;
-  float ey = az*vx - ax*vz;
-  float ez = ax*vy - ay*vx;
+  float ex = ay * vz - az * vy;
+  float ey = az * vx - ax * vz;
+  float ez = ax * vy - ay * vx;
 
   eIntX += Ki_mah * ex * dt;
   eIntY += Ki_mah * ey * dt;
   eIntZ += Ki_mah * ez * dt;
 
-  gx += Kp_mah*ex + eIntX;
-  gy += Kp_mah*ey + eIntY;
-  gz += Kp_mah*ez + eIntZ;
+  gx += Kp_mah * ex + eIntX;
+  gy += Kp_mah * ey + eIntY;
+  gz += Kp_mah * ez + eIntZ;
 
-  float dq0 = 0.5f*(-q1*gx - q2*gy - q3*gz)*dt;
-  float dq1 = 0.5f*( q0*gx + q2*gz - q3*gy)*dt;
-  float dq2 = 0.5f*( q0*gy - q1*gz + q3*gx)*dt;
-  float dq3 = 0.5f*( q0*gz + q1*gy - q2*gx)*dt;
+  float dq0 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz) * dt;
+  float dq1 = 0.5f * (q0 * gx + q2 * gz - q3 * gy) * dt;
+  float dq2 = 0.5f * (q0 * gy - q1 * gz + q3 * gx) * dt;
+  float dq3 = 0.5f * (q0 * gz + q1 * gy - q2 * gx) * dt;
 
-  q0 += dq0; q1 += dq1; q2 += dq2; q3 += dq3;
+  q0 += dq0;
+  q1 += dq1;
+  q2 += dq2;
+  q3 += dq3;
 
-  float qnorm = q0*q0 + q1*q1 + q2*q2 + q3*q3;
+  float qnorm = q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3;
   if (!isfinite(qnorm)) {
-    Serial.println("ERR: quaternion NaN");
+    dbg.println("ERR: quaternion NaN");
     return;
   }
   if (qnorm < 0.9f || qnorm > 1.1f) {
     float s = sqrtf(qnorm);
-    q0 /= s; q1 /= s; q2 /= s; q3 /= s;
+    q0 /= s;
+    q1 /= s;
+    q2 /= s;
+    q3 /= s;
   } else {
     norm = invSqrt(qnorm);
-    q0 *= norm; q1 *= norm; q2 *= norm; q3 *= norm;
+    q0 *= norm;
+    q1 *= norm;
+    q2 *= norm;
+    q3 *= norm;
   }
 }
 
 void quaternionToEuler(float &r, float &p, float &y_out) {
-  r     = atan2f(2.0f*(q0*q1 + q2*q3),
-                 1.0f - 2.0f*(q1*q1 + q2*q2)) * RAD2DEG;
-  float sinp = constrain(2.0f*(q0*q2 - q3*q1), -1.0f, 1.0f);
-  p     = asinf(sinp) * RAD2DEG;
-  y_out = atan2f(2.0f*(q0*q3 + q1*q2),
-                 1.0f - 2.0f*(q2*q2 + q3*q3)) * RAD2DEG;
+  float gx = 2.0f * (q1 * q3 - q0 * q2);
+  float gy = 2.0f * (q0 * q1 + q2 * q3);
+  float gz = q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3;
+
+  // Both angles measured independently from vertical (gz)
+  r = atan2f(gy, gz) * RAD2DEG;
+  p = atan2f(gx, gz) * RAD2DEG;  // ← gz, not sqrtf(gy²+gz²)
+
+  y_out = atan2f(2.0f * (q0 * q3 + q1 * q2),
+                 1.0f - 2.0f * (q2 * q2 + q3 * q3))
+          * RAD2DEG;
 }
 
 // ============================================================
@@ -183,7 +200,8 @@ void IMU() {
   float ax_raw = (Wire.read() << 8 | Wire.read()) / 4096.0f;
   float ay_raw = (Wire.read() << 8 | Wire.read()) / 4096.0f;
   float az_raw = (Wire.read() << 8 | Wire.read()) / 4096.0f;
-  Wire.read(); Wire.read();
+  Wire.read();
+  Wire.read();
   float gx = ((Wire.read() << 8 | Wire.read()) / 32.8f - gyrError[0]) * DEG2RAD;
   float gy = ((Wire.read() << 8 | Wire.read()) / 32.8f - gyrError[1]) * DEG2RAD;
   float gz = ((Wire.read() << 8 | Wire.read()) / 32.8f - gyrError[2]) * DEG2RAD;
@@ -200,24 +218,28 @@ void IMU() {
 
   mahonyUpdate(gx, gy, gz, axf, ayf, azf, elapsedTime);
   quaternionToEuler(roll, pitch, yaw);
+  // after quaternionToEuler call in IMU()
+  if (roll > 180.0f) roll -= 360.0f;
+  if (roll < -180.0f) roll += 360.0f;
 
-  roll  -= MOUNT_OFFSET_ROLL;
+  roll -= MOUNT_OFFSET_ROLL;
   pitch -= MOUNT_OFFSET_PITCH;
 
-  if (fabsf(roll  - prev_roll)  > 10.0f) roll  = prev_roll;
-  if (fabsf(pitch - prev_pitch) > 10.0f) pitch = prev_pitch;
-  if (fabsf(yaw   - prev_yaw)   > 10.0f) yaw   = prev_yaw;
 
-  prev_roll  = roll;
+  /*if (fabsf(roll - prev_roll) > 20.0f) roll = prev_roll;
+  if (fabsf(pitch - prev_pitch) > 20.0f) pitch = prev_pitch;
+  if (fabsf(yaw - prev_yaw) > 20.0f) yaw = prev_yaw;*/
+
+  prev_roll = roll;
   prev_pitch = pitch;
-  prev_yaw   = yaw;
+  prev_yaw = yaw;
 }
 
 // ============================================================
 // IMU CALIBRATION
 // ============================================================
 void calculate_IMU_error() {
-  Serial.println("Calibrating IMU — keep still...");
+  dbg.println("Calibrating IMU — keep still...");
 
   for (int i = 0; i < 5000; i++) {
     Wire.beginTransmission(MPU_ADDR);
@@ -230,10 +252,12 @@ void calculate_IMU_error() {
   }
   for (int i = 0; i < 3; i++) gyrError[i] /= 5000.0f;
 
-  Serial.print("Gyro offsets: ");
-  Serial.print(gyrError[0]); Serial.print(", ");
-  Serial.print(gyrError[1]); Serial.print(", ");
-  Serial.println(gyrError[2]);
+  dbg.print("Gyro offsets: ");
+  dbg.print(gyrError[0]);
+  dbg.print(", ");
+  dbg.print(gyrError[1]);
+  dbg.print(", ");
+  dbg.println(gyrError[2]);
 
   float axSum = 0, aySum = 0, azSum = 0;
   for (int i = 0; i < 500; i++) {
@@ -249,32 +273,41 @@ void calculate_IMU_error() {
   float ay = aySum / 500.0f;
   float az = azSum / 500.0f;
 
-  axf = ax; ayf = ay; azf = az;
+  axf = ax;
+  ayf = ay;
+  azf = az;
 
-  float initRoll  = atan2f(ay, sqrtf(ax*ax + az*az));
-  float initPitch = atan2f(-ax, sqrtf(ay*ay + az*az));
+  float initRoll = atan2f(ay, sqrtf(ax * ax + az * az));
+  float initPitch = atan2f(-ax, sqrtf(ay * ay + az * az));
 
-  q0 =  cosf(initRoll/2)*cosf(initPitch/2);
-  q1 =  sinf(initRoll/2)*cosf(initPitch/2);
-  q2 =  cosf(initRoll/2)*sinf(initPitch/2);
-  q3 = -sinf(initRoll/2)*sinf(initPitch/2);
+  q0 = cosf(initRoll / 2) * cosf(initPitch / 2);
+  q1 = sinf(initRoll / 2) * cosf(initPitch / 2);
+  q2 = cosf(initRoll / 2) * sinf(initPitch / 2);
+  q3 = -sinf(initRoll / 2) * sinf(initPitch / 2);
 
-  float norm = invSqrt(q0*q0 + q1*q1 + q2*q2 + q3*q3);
-  q0 *= norm; q1 *= norm; q2 *= norm; q3 *= norm;
+  float norm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+  q0 *= norm;
+  q1 *= norm;
+  q2 *= norm;
+  q3 *= norm;
 
   quaternionToEuler(roll, pitch, yaw);
-  Serial.print("Mount tilt measured — Roll: "); Serial.print(roll);
-  Serial.print(", Pitch: ");                    Serial.println(pitch);
+  dbg.print("Mount tilt measured — Roll: ");
+  dbg.print(roll);
+  dbg.print(", Pitch: ");
+  dbg.println(pitch);
 
-  roll  -= MOUNT_OFFSET_ROLL;
+  roll -= MOUNT_OFFSET_ROLL;
   pitch -= MOUNT_OFFSET_PITCH;
-  prev_roll = roll; prev_pitch = pitch; prev_yaw = yaw;
+  prev_roll = roll;
+  prev_pitch = pitch;
+  prev_yaw = yaw;
 
-  Serial.println("IMU calibration done.");
+  dbg.println("IMU calibration done.");
 }
 
 // ============================================================
-// iBUS RECEIVER
+// iBUS RECEIVER  (hardware Serial, pins 0/1)
 // ============================================================
 bool ibusValidChecksum(uint8_t *frame) {
   uint16_t csum = 0xFFFF;
@@ -287,7 +320,10 @@ void ibusRead() {
     uint8_t b = Serial.read();
 
     if (ibusIdx == 0 && b != 0x20) continue;
-    if (ibusIdx == 1 && b != 0x40) { ibusIdx = 0; continue; }
+    if (ibusIdx == 1 && b != 0x40) {
+      ibusIdx = 0;
+      continue;
+    }
 
     ibusBuf[ibusIdx++] = b;
 
@@ -295,7 +331,7 @@ void ibusRead() {
       ibusIdx = 0;
       if (ibusValidChecksum(ibusBuf)) {
         for (uint8_t i = 0; i < 6; i++) {
-          ibusChannels[i] = ibusBuf[2 + i*2] | (ibusBuf[3 + i*2] << 8);
+          ibusChannels[i] = ibusBuf[2 + i * 2] | (ibusBuf[3 + i * 2] << 8);
         }
       }
       // Invalid/missing frames leave ibusChannels[] untouched.
@@ -325,17 +361,20 @@ void recv() {
 // ESC CALIBRATION
 // ============================================================
 void esc_calibration() {
-  Serial.println("=== ESC CALIBRATION ===");
-  Serial.println("DISCONNECT BATTERY. Waiting 3s...");
+  dbg.println("=== ESC CALIBRATION ===");
+  dbg.println("DISCONNECT BATTERY. Waiting 3s...");
   delay(3000);
   for (int i = 0; i < 4; i++) esc[i].write(2000);
-  Serial.println("CONNECT BATTERY — wait for beeps (~5s)");
+  dbg.println("CONNECT BATTERY — wait for beeps (~5s)");
   delay(5000);
   for (int i = 0; i < 4; i++) esc[i].write(1000);
-  Serial.println("Done. DISCONNECT BATTERY.");
+  dbg.println("Done. DISCONNECT BATTERY.");
   delay(5000);
   while (true) {
-    for (int i = 0; i < 4; i++) { m[i].Power = 1000; m[i].update(); }
+    for (int i = 0; i < 4; i++) {
+      m[i].Power = 1000;
+      m[i].update();
+    }
     delay(100);
   }
 }
@@ -344,28 +383,34 @@ void esc_calibration() {
 // SETUP
 // ============================================================
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);  // iBUS input — pins 0/1
+  dbg.begin(38400);      // debug output — pin 2, to 2nd Uno's relay
 
   Wire.begin();
   Wire.setClock(400000);
+  Wire.setWireTimeout(3000, true);  // 3ms timeout, auto-reset I2C bus on timeout
 
-  pinMode(led,  OUTPUT);
+  pinMode(led, OUTPUT);
   pinMode(led1, OUTPUT);
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x6B); Wire.write(0x00);
+  Wire.write(0x6B);
+  Wire.write(0x00);
   Wire.endTransmission();
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1C); Wire.write(0x10);
+  Wire.write(0x1C);
+  Wire.write(0x10);
   Wire.endTransmission();
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1B); Wire.write(0x10);
+  Wire.write(0x1B);
+  Wire.write(0x10);
   Wire.endTransmission();
 
   Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x1A); Wire.write(0x05);
+  Wire.write(0x1A);
+  Wire.write(0x05);
   Wire.endTransmission();
 
   digitalWrite(led, HIGH);
@@ -381,11 +426,26 @@ void setup() {
 
   if (CALIBRATION_MODE) esc_calibration();
 
-  for (int i = 0; i < 4; i++) { m[i].Power = 2000; m[i].update(); }
+  for (int i = 0; i < 4; i++) {
+    m[i].Power = 2000;
+    m[i].update();
+  }
   delay(100);
-  for (int i = 0; i < 4; i++) { m[i].Power = 1000; m[i].update(); }
+  for (int i = 0; i < 4; i++) {
+    m[i].Power = 1000;
+    m[i].update();
+  }
+  // Wait until receiver is live and throttle stick is confirmed low
+  dbg.println("Waiting for receiver + throttle low...");
 
-  Serial.println("System ready.");
+  ibusChannels[2] = 1049;
+  while (ibusChannels[2] > 1050) {
+    ibusRead();
+    dbg.println(ibusChannels[2]);
+    delay(100);
+  }
+  dbg.println("Receiver ready.");
+  dbg.println("System ready.");
   delay(2000);
 }
 
@@ -393,16 +453,17 @@ void setup() {
 // LOOP
 // ============================================================
 void loop() {
+  //digitalWrite(led, HIGH);
   static unsigned long loop_timer = micros();
   unsigned long now = micros();
   while (now - loop_timer < LOOP_PERIOD_US) now = micros();
   loop_timer = now;
 
-  LedBlinker();
+
 
   previousTime = currentTime;
-  currentTime  = millis();
-  elapsedTime  = (currentTime - previousTime) / 1000.0f;
+  currentTime = millis();
+  elapsedTime = (currentTime - previousTime) / 1000.0f;
   if (elapsedTime <= 0 || elapsedTime > 0.05f) elapsedTime = 0.01f;
 
   recv();
@@ -410,7 +471,8 @@ void loop() {
   throttle = constrain(1000.0f + slider, 1000.0f, (float)MAX_THROTTLE);
 
   IMU();
-
+  roll = -roll;
+  pitch = -pitch;
   if (throttle >= PID_THROTTLE_MIN) {
     PID_cascaded_X();
     PID_cascaded_Y();
@@ -422,7 +484,8 @@ void loop() {
     PID_x = PID_y = PID_z = 0;
     iRateRoll = iRatePitch = iRateYaw = 0;
     for (int i = 0; i < 4; i++) {
-      m[i].Final = throttle;
+      m[i].Power = 1000;
+      m[i].Final = 1000;
       m[i].update();
     }
   }
@@ -430,20 +493,44 @@ void loop() {
   printLoopHz();
 
   static unsigned long lastDebug = 0;
-  if (millis() - lastDebug >= 100) {
+  if (millis() - lastDebug >= 200) {
+    LedBlinker();
     lastDebug = millis();
-    Serial.print(millis());
-    Serial.print(" | M:");
-    Serial.print(m[0].Power); Serial.print("/");
-    Serial.print(m[1].Power); Serial.print("/");
-    Serial.print(m[2].Power); Serial.print("/");
-    Serial.print(m[3].Power);
-    Serial.print(" | PID:");
-    Serial.print(PID_x, 1); Serial.print(",");
-    Serial.print(PID_y, 1);
-    Serial.print(" | R:");  Serial.print(roll, 1);
-    Serial.print(" P:");    Serial.println(pitch, 1);
+    dbg.print(millis());
+    dbg.print(" | M:");
+    dbg.print(m[0].Power);
+    dbg.print("/");
+    dbg.print(m[1].Power);
+    dbg.print("/");
+    dbg.print(m[2].Power);
+    dbg.print("/");
+    dbg.print(m[3].Power);
+    dbg.print(" | PID:");
+    dbg.print(PID_x, 1);
+    dbg.print(",");
+    dbg.print(PID_y, 1);
+    dbg.print(" | R:");
+    dbg.print(roll, 1);
+    dbg.print(" P:");
+    dbg.print(pitch, 1);
+    dbg.print(" | ");
+    dbg.println(throttle);
+    /*dbg.print(millis());
+    dbg.print(" M:");
+    dbg.print((int)m[0].Power);
+    dbg.print('/');
+    dbg.print((int)m[1].Power);
+    dbg.print('/');
+    dbg.print((int)m[2].Power);
+    dbg.print('/');
+    dbg.print((int)m[3].Power);
+    dbg.print(" R:");
+    dbg.print(roll, 1);
+    dbg.print(" P:");
+    dbg.println(pitch, 1);*/
   }
+  roll = -roll;  // used 2 of these because other wise the sign is flipped
+  pitch= -pitch; // same reason as roll
 }
 
 // ============================================================
@@ -457,13 +544,13 @@ float outerAngleToRate(float cmdDeg, float measDeg, float OPIDP) {
 
 float innerRatePID(float rateCmd, float gyroRate, float &iRate, float dt) {
   float rateErr = rateCmd - gyroRate;
-  float pTerm   = KPIDP * rateErr;
-  float dTerm   = KPIDD * (-gyroRate);
-  float uNoI    = pTerm + dTerm;
-  float uPred   = uNoI + KPIDI * iRate;
+  float pTerm = KPIDP * rateErr;
+  float dTerm = KPIDD * (-gyroRate);
+  float uNoI = pTerm + dTerm;
+  float uPred = uNoI + KPIDI * iRate;
 
-  bool satHigh = (uPred >=  PID_LIM) && (rateErr > 0);
-  bool satLow  = (uPred <= -PID_LIM) && (rateErr < 0);
+  bool satHigh = (uPred >= PID_LIM) && (rateErr > 0);
+  bool satLow = (uPred <= -PID_LIM) && (rateErr < 0);
   if (!(satHigh || satLow)) {
     iRate += rateErr * dt;
     iRate = constrain(iRate, -IRATE_LIM, IRATE_LIM);
@@ -499,7 +586,7 @@ void PID_cascaded_Z() {
 void motorchangetest(bool fast) {
   float factor = fast ? 1.0f : 0.2f;
   for (int i = 0; i < 4; i++) {
-    m[i].Power   = m[i].Initial + factor * (m[i].Final - m[i].Initial);
+    m[i].Power = m[i].Initial + factor * (m[i].Final - m[i].Initial);
     m[i].Initial = m[i].Power;
     m[i].update();
   }
@@ -509,16 +596,25 @@ void motorchangetest(bool fast) {
 // DEBUG / STATUS  (defined, not currently called from loop())
 // ============================================================
 void debug_output() {
-  Serial.print(m[0].Power); Serial.print("/");
-  Serial.print(m[1].Power); Serial.print("/");
-  Serial.print(m[2].Power); Serial.print("/");
-  Serial.print(m[3].Power);
-  Serial.print(" | R:"); Serial.print(roll);
-  Serial.print(" P:");   Serial.print(pitch);
-  Serial.print(" Y:");   Serial.print(yaw);
-  Serial.print(" | thr:"); Serial.print(slider);
-  Serial.print(" x:");     Serial.print(x);
-  Serial.print(" y:");     Serial.println(y);
+  dbg.print(m[0].Power);
+  dbg.print("/");
+  dbg.print(m[1].Power);
+  dbg.print("/");
+  dbg.print(m[2].Power);
+  dbg.print("/");
+  dbg.print(m[3].Power);
+  dbg.print(" | R:");
+  dbg.print(roll);
+  dbg.print(" P:");
+  dbg.print(pitch);
+  dbg.print(" Y:");
+  dbg.print(yaw);
+  dbg.print(" | thr:");
+  dbg.print(slider);
+  dbg.print(" x:");
+  dbg.print(x);
+  dbg.print(" y:");
+  dbg.println(y);
 }
 
 void printLoopHz() {
@@ -526,9 +622,9 @@ void printLoopHz() {
   static unsigned long count = 0;
   count++;
   if (millis() - lastPrint >= 1000) {
-    Serial.print("Loop Hz: ");
-    Serial.println(count);
-    count     = 0;
+    dbg.print("Loop Hz: ");
+    dbg.println(count);
+    count = 0;
     lastPrint = millis();
   }
 }
@@ -537,7 +633,7 @@ void LedBlinker() {
   if (throttle >= PID_THROTTLE_MIN) {
     digitalWrite(led, HIGH);  // solid on = PIDs active
   } else {
-    digitalWrite(led, LOW);   // off = throttle idle
+    digitalWrite(led, LOW);  // off = throttle idle
   }
 }
 

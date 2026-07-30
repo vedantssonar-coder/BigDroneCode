@@ -1,5 +1,5 @@
 // PWM to IBUS - Pro Mini
-// CH2 (dead, pin 3) replaced with CH5 mirror (pin 6)
+// CH2 fixed on receiver - direct 1:1 channel mapping, no mirroring
 // Arduino Pro Mini 5V 16MHz
 
 #define IBUS_FRAME_LENGTH 0x20
@@ -12,7 +12,6 @@
 const uint8_t PWM_PINS[NUM_CHANNELS] = {2, 3, 4, 5, 6, 7};
 // pwmRaw index:                          0  1  2  3  4  5
 // Receiver channel:                     CH1 CH2 CH3 CH4 CH5 CH6
-// CH2 (index 1) is dead - ignored, CH5 (index 4) is the mirrored replacement
 
 volatile uint32_t pwmStart[NUM_CHANNELS];
 volatile uint16_t pwmRaw[NUM_CHANNELS];
@@ -68,10 +67,10 @@ void buildAndSendIBUS() {
     uint16_t v;
     switch (i) {
       case 0: v = pwmValue[0]; break;       // IBUS CH1 <- pin2 (CH1)
-      case 1: v = pwmValue[4]; break;       // IBUS CH2 <- pin6 (CH5 mirror, replaces dead CH2)
+      case 1: v = pwmValue[1]; break;       // IBUS CH2 <- pin3 (CH2)
       case 2: v = pwmValue[2]; break;       // IBUS CH3 <- pin4 (CH3)
       case 3: v = pwmValue[3]; break;       // IBUS CH4 <- pin5 (CH4)
-      case 4: v = pwmValue[4]; break;       // IBUS CH5 <- pin6 (CH5, same signal as CH2 now)
+      case 4: v = pwmValue[4]; break;       // IBUS CH5 <- pin6 (CH5)
       case 5: v = pwmValue[5]; break;       // IBUS CH6 <- pin7 (CH6)
       default: v = IBUS_DEFAULT; break;
     }
